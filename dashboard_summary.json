@@ -1,0 +1,21 @@
+{
+  "belegt": 87,
+  "frei": 23,
+  "vertragsdauer_durchschnitt": 10.7,
+  "neukunden_monat": [14, 21, 19, 23, 18],
+  "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai"],
+  "zahlungsstatus": {
+    "bezahlt": 94,
+    "offen": 9,
+    "überfällig": 2
+  },
+  "reminder_automat": 6,
+  "social_facebook": 212,
+  "social_google": 63,
+  "belegungsgrad": 79,
+  "kundenherkunft": {
+    "Empfehlung": 34,
+    "Online": 57,
+    "Laufkundschaft": 19
+  }
+}
