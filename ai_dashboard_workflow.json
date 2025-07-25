@@ -1,216 +1,33 @@
 {
-  "name": "AI Dashboard Workflow",
-  "nodes": [
-    {
-      "parameters": {
-        "cronExpression": "0 7 * * *"
-      },
-      "name": "Trigger - Daily at 7:00",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
-      "position": [
-        200,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "sheetId": "<GOOGLE_SHEET_ID>",
-        "range": "SalesData!A1:G",
-        "valueRenderMode": "UNFORMATTED_VALUE",
-        "dateTimeRenderOption": "FORMATTED_STRING"
-      },
-      "name": "Google Sheets - Get Data",
-      "type": "n8n-nodes-base.googleSheets",
-      "typeVersion": 3,
-      "position": [
-        400,
-        200
+  "zusammenfassung": "Ihre Kampagnen laufen effizient. Facebook generierte mehr Klicks, aber Google Ads lieferte günstigere Leads. Empfohlene Budget-Verschiebung: 20 % von Facebook zu Google.",
+  "kampagnen": {
+    "google_ads": {
+      "campaigns": [
+        {
+          "name": "Google Suchanzeigen Juli",
+          "impressions": 4500,
+          "clicks": 320,
+          "cost_eur": 85.3,
+          "conversions": 12
+        }
       ],
-      "credentials": {
-        "googleSheetsOAuth2Api": "<CREDENTIALS>"
-      }
+      "gesamt_klickpreis": 0.27
     },
-    {
-      "parameters": {
-        "functionCode": "const yesterday = new Date(Date.now() - 24*60*60*1000);\nreturn items.filter(item => new Date(item.json.Date) > yesterday);"
-      },
-      "name": "Filter - Last 24h",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [
-        600,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "model": "gpt-4o",
-        "messages": [
-          {
-            "role": "system",
-            "content": "You are an assistant that analyzes business data and provides daily summaries for a dashboard."
-          },
-          {
-            "role": "user",
-            "content": "Analyze the following sales and customer data. Summarize the main trends, outliers, and opportunities as bullet points. Data: {{$json}}"
-          }
-        ],
-        "temperature": 0.3
-      },
-      "name": "OpenAI - Analyze Data",
-      "type": "n8n-nodes-base.openai",
-      "typeVersion": 2,
-      "position": [
-        800,
-        200
+    "facebook_ads": {
+      "campaigns": [
+        {
+          "name": "FB Sommeraktion",
+          "impressions": 6000,
+          "clicks": 210,
+          "cost_eur": 120.0,
+          "conversions": 7
+        }
       ],
-      "credentials": {
-        "openAIApi": "<CREDENTIALS>"
-      }
-    },
-    {
-      "parameters": {
-        "channel": "<SLACK_CHANNEL_ID>",
-        "text": "📊 *Tägliches Dashboard (7:00 Uhr)*\n{{$json['choices'][0]['message']['content']}}"
-      },
-      "name": "Slack - Send Dashboard",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 1,
-      "position": [
-        1000,
-        200
-      ],
-      "credentials": {
-        "slackApi": "<CREDENTIALS>"
-      }
-    },
-    {
-      "parameters": {
-        "pdfContent": "Dashboard Summary:\n{{$json['choices'][0]['message']['content']}}",
-        "fileName": "dashboard-summary-{{ $now }}.pdf"
-      },
-      "name": "PDF - Export",
-      "type": "n8n-nodes-base.pdfMake",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "value": "{{$json}}",
-        "fileName": "dashboard-summary-{{ $now }}.json"
-      },
-      "name": "JSON - Export",
-      "type": "n8n-nodes-base.file",
-      "typeVersion": 1,
-      "position": [
-        1200,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "functionCode": "// Wenn Sheets leer oder API-Error\nif(items.length === 0){\n  return [{json:{error:'No new data'}}];\n}\nreturn items;"
-      },
-      "name": "Error Check - No Data",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 1,
-      "position": [
-        600,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "to": "<TEAM_EMAIL>",
-        "subject": "Fehler: Dashboard konnte nicht erstellt werden",
-        "text": "Die Google Sheets Daten konnten nicht geladen werden oder sind leer. Bitte prüfen!"
-      },
-      "name": "Send Error Email",
-      "type": "n8n-nodes-base.emailSend",
-      "typeVersion": 1,
-      "position": [
-        800,
-        400
-      ],
-      "credentials": {
-        "smtp": "<CREDENTIALS>"
-      }
+      "gesamt_klickpreis": 0.57
     }
-  ],
-  "connections": {
-    "Trigger - Daily at 7:00": {
-      "main": [
-        [
-          {
-            "node": "Google Sheets - Get Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Google Sheets - Get Data": {
-      "main": [
-        [
-          {
-            "node": "Filter - Last 24h",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Filter - Last 24h": {
-      "main": [
-        [
-          {
-            "node": "OpenAI - Analyze Data",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Error Check - No Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "OpenAI - Analyze Data": {
-      "main": [
-        [
-          {
-            "node": "Slack - Send Dashboard",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "PDF - Export",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "JSON - Export",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Error Check - No Data": {
-      "main": [
-        [
-          {
-            "node": "Send Error Email",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    }
+  },
+  "sparpotenzial": {
+    "text": "Hätten Sie 20 % des Facebook-Budgets auf Google Ads verschoben, hätten Sie 3 Leads mehr bei gleichbleibenden Kosten generiert.",
+    "empfehlung": "Verteilen Sie im nächsten Monat das Budget zu 60 % auf Google Ads und zu 40 % auf Facebook Ads."
   }
 }
