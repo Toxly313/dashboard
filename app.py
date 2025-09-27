@@ -41,39 +41,63 @@ uploaded_file = st.file_uploader(
 
 # Verarbeite Datei wenn hochgeladen
 if uploaded_file:
-    # Dateigrößenlimit (5MB)
-    if uploaded_file.size > 5 * 1024 * 1024:
-        st.error("❌ Datei zu groß - max. 5MB erlaubt")
-        st.stop()
-    
-    # Dateityp validieren
-    allowed_types = ["text/csv", "application/json", 
-                    "application/vnd.ms-excel",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
-    if uploaded_file.type not in allowed_types:
-        st.error("❌ Ungültiger Dateityp - nur CSV, JSON oder Excel erlaubt")
-        st.stop()
-    
     with st.spinner("KI verarbeitet Daten datenschutzkonform..."):
         try:
-            # Generiere eindeutige Session-ID
             session_id = str(uuid.uuid4())
             
-            # Sende Datei an n8n zur Verarbeitung
-            response = requests.post(
-                N8N_WEBHOOK_URL,
-                files={"file": (uploaded_file.name, uploaded_file.getvalue())},
-                headers={"X-Session-ID": session_id},
-                timeout=30
-            )
+            # Debug-Ausgabe
+            st.write(f"📤 Sende Datei an n8n...")
+            
+            # Datei vorbereiten
+            file_data = uploaded_file.getvalue()
+            
+            # Mehrere Versuche mit verschiedenen Content-Types
+            try:
+                # Versuch 1: Standard multipart/form-data
+                response = requests.post(
+                    N8N_WEBHOOK_URL,
+                    files={"file": (uploaded_file.name, file_data)},
+                    headers={"X-Session-ID": session_id},
+                    timeout=30
+                )
+            except:
+                # Versuch 2: Einfacher JSON Upload
+                response = requests.post(
+                    N8N_WEBHOOK_URL,
+                    json={
+                        "fileName": uploaded_file.name,
+                        "file": base64.b64encode(file_data).decode('utf-8')
+                    },
+                    timeout=30
+                )
 
+            # Response validieren
+            st.write(f"📥 Antwort erhalten: Status {response.status_code}")
+            
             if response.status_code == 200:
-                st.session_state.data = response.json()
-                st.success("✅ Daten erfolgreich verarbeitet - Keine Daten gespeichert!")
+                try:
+                    # Response als JSON parsen
+                    response_data = response.json()
+                    st.session_state.data = response_data
+                    st.success("✅ Daten erfolgreich verarbeitet!")
+                    
+                    # Debug: Zeige empfangene Daten
+                    st.write("📊 Empfangene Daten:", response_data)
+                    
+                except json.JSONDecodeError as e:
+                    st.error(f"❌ Ungültiges JSON erhalten: {response.text}")
+                    # Fallback-Daten verwenden
+                    st.session_state.data = DEFAULT_DATA
             else:
-                st.error(f"❌ Fehler bei der Verarbeitung: Status {response.status_code}")
+                st.error(f"❌ Fehler von n8n: Status {response.status_code}")
+                st.write(f"Antwort-Text: {response.text}")
+                # Fallback-Daten verwenden
+                st.session_state.data = DEFAULT_DATA
+                
         except Exception as e:
             st.error(f"❌ Systemfehler: {str(e)}")
+            # Fallback-Daten verwenden
+            st.session_state.data = DEFAULT_DATA
 
 # Verwende die aktuellen Daten (entweder aus Session oder Default)
 data = st.session_state.data
