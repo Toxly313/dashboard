@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # Konfiguration
-N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://your-n8n-service.railway.app/webhook/business-data")
+N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "https://tundtelectronics.app.n8n.cloud/webhook-test/process-business-data")
 DEFAULT_DATA = {
     "belegt": 0,
     "frei": 0,
