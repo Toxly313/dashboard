@@ -14,7 +14,7 @@ import pandas as pd
 # ---------------------------------
 N8N_WEBHOOK_URL = os.environ.get(
     "N8N_WEBHOOK_URL",
-    "https://tundtelectronics.app.n8n.cloud/webhook-test/process-business-data"
+    "https://tundtelectronics.app.n8n.cloud/webhook/process-business-data"  # Achte auf /webhook/ statt /webhook-test/
 )
 
 DEFAULT_DATA = {
@@ -68,9 +68,11 @@ if "processing" not in st.session_state:
 if "history" not in st.session_state:
     # Liste von Snapshots (Zeit, Daten)
     st.session_state.history = []
+if "file_uploader_key" not in st.session_state:
+    st.session_state.file_uploader_key = 0
 
 # ---------------------------------
-# Helper
+# Helper Functions
 # ---------------------------------
 def delta(a, b):
     """Delta b - a (absolut, prozentual)"""
@@ -121,7 +123,7 @@ def extract_metrics_from_excel(df: pd.DataFrame) -> dict:
         "zahlungsstatus_überfällig": ("zahlungsstatus", "überfällig"),
     }
     out = {"kundenherkunft": {}, "zahlungsstatus": {}}
-    # Wir nehmen die erste Zeile als „aktuellen Stand“ (oder Mittelwert)
+    # Wir nehmen die erste Zeile als „aktuellen Stand" (oder Mittelwert)
     if len(df) == 0:
         return {}
     row = df.iloc[0]
@@ -150,37 +152,12 @@ def merge_data(base: dict, addon: dict) -> dict:
             merged[k] = v
     return merged
 
-# ---------------------------------
-# Upload: Excel (lokal) & Datei an KI (n8n)
-# ---------------------------------
-st.subheader("📥 Datenzufuhr")
-col_up1, col_up2 = st.columns(2)
+def upload_and_process(uploaded_file, excel_metrics=None):
+    """Verarbeitet die Datei und sendet sie an n8n"""
+    if uploaded_file is None:
+        st.error("❌ Bitte wählen Sie zuerst eine Datei aus.")
+        return False
 
-with col_up1:
-    excel_file = st.file_uploader("Optional: Excel-Rohdaten (für Anzeige & Merge)", type=["xlsx"], key="excel_upl")
-
-with col_up2:
-    uploaded_file = st.file_uploader(
-        "Geschäftsdaten an KI/n8n senden (CSV/JSON/Excel)",
-        type=["csv", "json", "xlsx"],
-        help="Wird an n8n geschickt, dort von KI verarbeitet und als JSON zurückgegeben.",
-        key="ki_upl"
-    )
-
-# Excel einlesen (nur Anzeige & optionaler Merge)
-excel_metrics = {}
-if excel_file:
-    try:
-        df_excel = pd.read_excel(excel_file)
-        if SHOW_RAW_DATA:
-            st.markdown("**📋 Excel-Rohdaten**")
-            st.dataframe(df_excel, use_container_width=True)
-        excel_metrics = extract_metrics_from_excel(df_excel)
-    except Exception as e:
-        st.warning(f"Excel konnte nicht gelesen/mapped werden: {e}")
-
-# KI-Verarbeitung via n8n
-if uploaded_file and uploaded_file != st.session_state.last_upload:
     st.session_state.processing = True
     st.session_state.prev_data = st.session_state.data.copy()
     st.session_state.last_upload = uploaded_file
@@ -211,32 +188,77 @@ if uploaded_file and uploaded_file != st.session_state.last_upload:
                 try:
                     response_data = response.json()
                     # Excel-Metriken (falls vorhanden) in KI-JSON mergen
-                    merged = merge_data(response_data, excel_metrics)
+                    merged = merge_data(response_data, excel_metrics or {})
                     st.session_state.data = merged
                     st.session_state.processing = False
                     st.session_state.history.append({"ts": datetime.now().isoformat(), "data": merged})
+                    
+                    # Setze den Uploader zurück, um eine neue Datei zu ermöglichen
+                    st.session_state.file_uploader_key += 1
 
                     st.success("✅ Daten erfolgreich verarbeitet!")
                     if merged.get("ki_analyse_erfolgreich"):
                         st.info("🤖 KI-Analyse erfolgreich")
                     elif merged.get("fallback_used"):
                         st.warning("⚠️ Fallback-Daten verwendet")
+                    return True
                 except json.JSONDecodeError as e:
                     st.error(f"❌ Ungültiges JSON: {e}")
-                    if DEBUG_MODE: st.sidebar.error(response.text[:500])
+                    if DEBUG_MODE: 
+                        st.sidebar.error(response.text[:500])
                     st.session_state.data = st.session_state.prev_data.copy()
                     st.session_state.processing = False
+                    return False
             else:
                 st.error(f"❌ Fehler von n8n: Status {response.status_code}")
-                if DEBUG_MODE: st.sidebar.error(response.text)
+                if DEBUG_MODE: 
+                    st.sidebar.error(response.text)
                 st.session_state.data = st.session_state.prev_data.copy()
                 st.session_state.processing = False
+                return False
 
         except Exception as e:
             st.error(f"❌ Systemfehler: {e}")
-            if DEBUG_MODE: st.sidebar.exception(e)
+            if DEBUG_MODE: 
+                st.sidebar.exception(e)
             st.session_state.data = st.session_state.prev_data.copy()
             st.session_state.processing = False
+            return False
+
+# ---------------------------------
+# Upload Section mit Button
+# ---------------------------------
+st.subheader("📥 Datenzufuhr")
+
+# Excel einlesen (nur Anzeige & optionaler Merge)
+excel_file = st.file_uploader(
+    "Optional: Excel-Rohdaten (für Anzeige & Merge)", 
+    type=["xlsx"], 
+    key="excel_upl"
+)
+
+excel_metrics = {}
+if excel_file:
+    try:
+        df_excel = pd.read_excel(excel_file)
+        if SHOW_RAW_DATA:
+            st.markdown("**📋 Excel-Rohdaten**")
+            st.dataframe(df_excel, use_container_width=True)
+        excel_metrics = extract_metrics_from_excel(df_excel)
+    except Exception as e:
+        st.warning(f"Excel konnte nicht gelesen/mapped werden: {e}")
+
+# KI-Verarbeitung mit Button
+uploaded_file = st.file_uploader(
+    "Geschäftsdaten für KI-Analyse auswählen (CSV/JSON/Excel)",
+    type=["csv", "json", "xlsx"],
+    help="Wird an n8n geschickt, dort von KI verarbeitet und als JSON zurückgegeben.",
+    key=f"ki_upl_{st.session_state.file_uploader_key}"
+)
+
+# Upload Button
+if st.button("📤 Datei hochladen und analysieren", type="primary"):
+    upload_and_process(uploaded_file, excel_metrics)
 
 if st.session_state.processing:
     st.info("🔄 Daten werden verarbeitet...")
@@ -439,6 +461,7 @@ if st.button("🔄 Daten zurücksetzen"):
     st.session_state.data = DEFAULT_DATA.copy()
     st.session_state.last_upload = None
     st.session_state.history = []
+    st.session_state.file_uploader_key += 1
     st.rerun()
 
 st.markdown("---")
