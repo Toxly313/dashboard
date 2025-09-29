@@ -14,7 +14,7 @@ import pandas as pd
 # ---------------------------------
 N8N_WEBHOOK_URL = os.environ.get(
     "N8N_WEBHOOK_URL",
-    "https://tundtelectronics.app.n8n.cloud/webhook/process-business-data"  # Achte auf /webhook/ statt /webhook-test/
+    "https://tundtelectronics.app.n8n.cloud/webhook/process-business-data"
 )
 
 DEFAULT_DATA = {
@@ -53,7 +53,7 @@ st.caption("Nalepastraße 162 – Lagerräume mit Business-Center  \nwww.schimme
 
 # Sidebar / Debug
 st.sidebar.title("🔧 Optionen")
-DEBUG_MODE = st.sidebar.checkbox("Debug-Modus aktivieren", value=False)
+DEBUG_MODE = st.sidebar.checkbox("Debug-Modus aktivieren", value=True)  # Default true für besseres Debugging
 SHOW_RAW_DATA = st.sidebar.checkbox("Rohdaten anzeigen (KI & Excel)", value=False)
 
 # Session init
@@ -66,7 +66,6 @@ if "last_upload" not in st.session_state:
 if "processing" not in st.session_state:
     st.session_state.processing = False
 if "history" not in st.session_state:
-    # Liste von Snapshots (Zeit, Daten)
     st.session_state.history = []
 if "file_uploader_key" not in st.session_state:
     st.session_state.file_uploader_key = 0
@@ -168,11 +167,13 @@ def upload_and_process(uploaded_file, excel_metrics=None):
             file_data = uploaded_file.getvalue()
 
             if DEBUG_MODE:
-                st.sidebar.info("🔍 Debug")
-                st.sidebar.write(f"Datei: {uploaded_file.name} / {uploaded_file.size} bytes")
-                st.sidebar.write(f"Webhook: {N8N_WEBHOOK_URL}")
-                st.sidebar.write(f"Session: {session_id}")
+                st.sidebar.info("🔍 Debug-Informationen")
+                st.sidebar.write(f"📁 Datei: {uploaded_file.name}")
+                st.sidebar.write(f"📊 Größe: {uploaded_file.size} bytes")
+                st.sidebar.write(f"🌐 n8n URL: {N8N_WEBHOOK_URL}")
+                st.sidebar.write(f"🆔 Session ID: {session_id}")
 
+            # Sende Datei an n8n
             response = requests.post(
                 N8N_WEBHOOK_URL,
                 files={"file": (uploaded_file.name, file_data)},
@@ -181,12 +182,26 @@ def upload_and_process(uploaded_file, excel_metrics=None):
             )
 
             if DEBUG_MODE:
-                st.sidebar.write(f"Status: {response.status_code}")
-                st.sidebar.write(f"Dauer: {response.elapsed.total_seconds():.2f}s")
+                st.sidebar.write(f"📡 Status: {response.status_code}")
+                st.sidebar.write(f"⏱️ Dauer: {response.elapsed.total_seconds():.2f}s")
+                st.sidebar.write("📨 Rohantwort:")
+                st.sidebar.code(response.text[:1000] if response.text else "LEER", language="text")
 
+            # Robuste Antwort-Verarbeitung
             if response.status_code == 200:
+                # Prüfe ob Antwort leer ist
+                if not response.text or not response.text.strip():
+                    st.error("❌ n8n hat eine leere Antwort zurückgegeben")
+                    if DEBUG_MODE:
+                        st.sidebar.error("Leere Antwort von n8n erhalten")
+                    st.session_state.data = st.session_state.prev_data.copy()
+                    st.session_state.processing = False
+                    return False
+                
                 try:
+                    # Versuche JSON zu parsen
                     response_data = response.json()
+                    
                     # Excel-Metriken (falls vorhanden) in KI-JSON mergen
                     merged = merge_data(response_data, excel_metrics or {})
                     st.session_state.data = merged
@@ -201,25 +216,55 @@ def upload_and_process(uploaded_file, excel_metrics=None):
                         st.info("🤖 KI-Analyse erfolgreich")
                     elif merged.get("fallback_used"):
                         st.warning("⚠️ Fallback-Daten verwendet")
+                    
+                    if DEBUG_MODE:
+                        st.sidebar.success("✅ JSON erfolgreich geparst")
+                        st.sidebar.json(merged, expanded=False)
+                    
                     return True
+                    
                 except json.JSONDecodeError as e:
-                    st.error(f"❌ Ungültiges JSON: {e}")
-                    if DEBUG_MODE: 
-                        st.sidebar.error(response.text[:500])
+                    error_msg = f"❌ Ungültiges JSON von n8n: {str(e)}"
+                    st.error(error_msg)
+                    if DEBUG_MODE:
+                        st.sidebar.error(f"JSON Parse Fehler: {str(e)}")
+                        st.sidebar.write("💡 Mögliche Ursachen:")
+                        st.sidebar.write("- n8n Workflow nicht aktiviert")
+                        st.sidebar.write("- Webhook-Pfad falsch")
+                        st.sidebar.write("- n8n gibt HTML-Fehlerseite zurück")
+                    
                     st.session_state.data = st.session_state.prev_data.copy()
                     st.session_state.processing = False
                     return False
+                    
             else:
-                st.error(f"❌ Fehler von n8n: Status {response.status_code}")
-                if DEBUG_MODE: 
-                    st.sidebar.error(response.text)
+                error_msg = f"❌ Fehler von n8n: Status {response.status_code}"
+                st.error(error_msg)
+                if DEBUG_MODE:
+                    st.sidebar.error(f"n8n Fehlerantwort: {response.text}")
                 st.session_state.data = st.session_state.prev_data.copy()
                 st.session_state.processing = False
                 return False
 
+        except requests.exceptions.Timeout:
+            st.error("❌ Timeout: n8n antwortet nicht (60s)")
+            if DEBUG_MODE:
+                st.sidebar.error("Timeout bei n8n Anfrage")
+            st.session_state.data = st.session_state.prev_data.copy()
+            st.session_state.processing = False
+            return False
+            
+        except requests.exceptions.ConnectionError:
+            st.error("❌ Verbindungsfehler: n8n ist nicht erreichbar")
+            if DEBUG_MODE:
+                st.sidebar.error("n8n URL nicht erreichbar")
+            st.session_state.data = st.session_state.prev_data.copy()
+            st.session_state.processing = False
+            return False
+            
         except Exception as e:
-            st.error(f"❌ Systemfehler: {e}")
-            if DEBUG_MODE: 
+            st.error(f"❌ Systemfehler: {str(e)}")
+            if DEBUG_MODE:
                 st.sidebar.exception(e)
             st.session_state.data = st.session_state.prev_data.copy()
             st.session_state.processing = False
@@ -240,13 +285,37 @@ excel_file = st.file_uploader(
 excel_metrics = {}
 if excel_file:
     try:
+        # Versuche openpyxl zu importieren
+        try:
+            import openpyxl
+        except ImportError:
+            st.error("""
+            **❌ Fehlende Abhängigkeit: openpyxl**
+            
+            Um Excel-Dateien zu lesen, muss openpyxl installiert werden:
+            
+            **Installation:**
+            ```bash
+            pip install openpyxl
+            ```
+            
+            **Für Railway/Streamlit Cloud:** Füge `openpyxl` zu deiner `requirements.txt` hinzu.
+            """)
+            st.stop()
+        
         df_excel = pd.read_excel(excel_file)
         if SHOW_RAW_DATA:
             st.markdown("**📋 Excel-Rohdaten**")
             st.dataframe(df_excel, use_container_width=True)
         excel_metrics = extract_metrics_from_excel(df_excel)
+        
+        if excel_metrics:
+            st.success(f"✅ Excel-Daten erfolgreich gelesen ({len(df_excel)} Zeilen)")
+        else:
+            st.warning("⚠️ Excel wurde gelesen, aber keine Metriken konnten extrahiert werden")
+            
     except Exception as e:
-        st.warning(f"Excel konnte nicht gelesen/mapped werden: {e}")
+        st.error(f"❌ Excel konnte nicht verarbeitet werden: {str(e)}")
 
 # KI-Verarbeitung mit Button
 uploaded_file = st.file_uploader(
@@ -265,6 +334,17 @@ if st.session_state.processing:
 
 data = st.session_state.data
 prev = st.session_state.prev_data
+
+# Zeige n8n Verbindungsstatus
+if DEBUG_MODE:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🌐 n8n Status")
+    try:
+        # Einfacher Verbindungstest
+        test_response = requests.get(N8N_WEBHOOK_URL.replace("/webhook/", ""), timeout=5)
+        st.sidebar.write(f"n8n erreichbar: {'✅' if test_response.status_code < 500 else '❌'}")
+    except:
+        st.sidebar.write("n8n erreichbar: ❌")
 
 # Rohdaten-Block
 if SHOW_RAW_DATA:
