@@ -419,16 +419,16 @@ with tabs[0]:
             labels.append(k); vals.append(pct_ if pct_ is not None else 0.0)
         fig_hm = go.Figure(data=go.Heatmap(z=[vals], x=labels, y=["Δ %"], colorscale="RdYlGn", zmid=0))
         fig_hm.update_layout(height=150, margin=dict(l=20,r=20,t=10,b=10))
-        st.plotly_chart(fig_hm, use_container_width=True)
+        st.plotly_chart(fig_hm, use_container_width=True, key="hm_start")
 
     # Drei Kernplots
     fig_occ, fig_pay, fig_src = plot_occ_pay_sources()
     col_l, col_r = st.columns(2)
     with col_l:
-        st.plotly_chart(fig_occ, use_container_width=True)
-        st.plotly_chart(fig_src, use_container_width=True)
+        st.plotly_chart(fig_occ, use_container_width=True, key="occ_start")
+        st.plotly_chart(fig_src, use_container_width=True, key="src_start")
     with col_r:
-        st.plotly_chart(fig_pay, use_container_width=True)
+        st.plotly_chart(fig_pay, use_container_width=True, key="pay_start")
 
     # Kennzahlen unten
     total_cur, occ_calc, occ_prev_calc, abs_occ, pct_occ = occupancy_numbers()
@@ -512,7 +512,8 @@ with tabs[4]:
     lc2.metric("Auslastung (%)", f"{occ_calc:.1f}", delta=badge_delta(abs_occ, pct_occ))
     lc3.metric("Ziel-Auslastung (%)", "92.0")
     fig_occ, _, _ = plot_occ_pay_sources()
-    st.plotly_chart(fig_occ, use_container_width=True)
+    st.plotly_chart(fig_occ, use_container_width=True, key="occ_lager")
+
     st.markdown("""
     **Steuerungs-Tipps:**
     - < 85% Auslastung → **2-Wochen-Aktion −10%** für Neukunden, Mindestmietdauer 3 Monate.
@@ -531,7 +532,7 @@ with tabs[5]:
     bars = go.Figure()
     bars.add_bar(x=["Facebook","Google"], y=[sf, sg], marker_color=["#1877F2","#34A853"])
     bars.update_layout(height=300, title="Leads nach Kanal")
-    st.plotly_chart(bars, use_container_width=True)
+    st.plotly_chart(bars, use_container_width=True, key="sm_bars")
     sm_tips = []
     if sg < 60:
         sm_tips.append("🔎 **Google Ads:** 2 Keywords mit Kaufabsicht testen ('Selfstorage [Stadt] mieten', 'Lagerraum kurzfristig').")
