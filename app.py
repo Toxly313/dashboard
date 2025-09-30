@@ -185,7 +185,7 @@ def upload_and_process(main_file, excel_metrics):
                 st.sidebar.write(f"🌐 n8n URL: {N8N_WEBHOOK_URL}")
                 st.sidebar.write(f"🆔 Session ID: {session_id}")
 
-            status, text, data_json = post_to_n8n((main_file.name, file_data))
+            status, text, data_json = post_to_n8n((main_file.name, file_data), session_id)
             if DEBUG_MODE:
                 st.sidebar.write(f"📡 Status: {status}")
                 st.sidebar.write("📨 Rohantwort:")
