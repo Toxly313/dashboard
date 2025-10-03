@@ -1,6 +1,5 @@
 # data_utils.py
-import json, uuid, requests
-import pandas as pd
+import json, uuid, requests, pandas as pd
 
 BETTER_RULES = {
     "belegt": True, "frei": False, "vertragsdauer_durchschnitt": True,
@@ -24,14 +23,12 @@ def badge_delta(abs_, pct_):
 
 def color_for_change(key, a, b):
     rule = BETTER_RULES.get(key, None)
-    try:
-        a = float(a); b = float(b)
-    except Exception:
-        return "#A9A9A9"
-    if b == a: return "#A9A9A9"
-    if rule is True:  return "#22C55E" if b > a else "#EF4444"
-    if rule is False: return "#22C55E" if b < a else "#EF4444"
-    return "#22C55E" if b > a else "#EF4444"
+    try: a=float(a); b=float(b)
+    except: return "#A9A9A9"
+    if b==a: return "#A9A9A9"
+    if rule is True:  return "#22C55E" if b>a else "#EF4444"
+    if rule is False: return "#22C55E" if b<a else "#EF4444"
+    return "#22C55E" if b>a else "#EF4444"
 
 def extract_metrics_from_excel(df: pd.DataFrame) -> dict:
     colmap = {
@@ -49,18 +46,16 @@ def extract_metrics_from_excel(df: pd.DataFrame) -> dict:
         "zahlungsstatus_überfällig": ("zahlungsstatus", "überfällig"),
     }
     out = {"kundenherkunft": {}, "zahlungsstatus": {}}
-    if len(df) == 0: return {}
+    if len(df)==0: return {}
     row = df.iloc[0]
     for c in df.columns:
-        key = c.strip().lower().replace(" ", "_")
+        key = c.strip().lower().replace(" ","_")
         if key in colmap:
             target = colmap[key]
-            try:
-                val = float(row[c])
-            except Exception:
-                continue
+            try: val = float(row[c])
+            except: continue
             if isinstance(target, tuple):
-                parent, child = target; out[parent][child] = val
+                p, ch = target; out[p][ch] = val
             else:
                 out[target] = val
     return out
@@ -75,9 +70,6 @@ def merge_data(base: dict, addon: dict) -> dict:
     return merged
 
 def post_to_n8n(url: str, file_tuple, session_id: str):
-    r = requests.post(
-        url, files={"file": file_tuple},
-        headers={"X-Session-ID": session_id}, timeout=60
-    )
+    r = requests.post(url, files={"file": file_tuple}, headers={"X-Session-ID": session_id}, timeout=60)
     try: return r.status_code, r.text, r.json()
     except Exception: return r.status_code, r.text, None
