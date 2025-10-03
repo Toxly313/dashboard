@@ -1,29 +1,36 @@
 # charts.py
 import plotly.graph_objects as go
-from ui_theme import apply_fig_style, ORANGE, ORANGE_DARK
+from ui_theme import style_fig, PURPLE, TEAL
 
-def bar_grouped(x, prev_vals, cur_vals, colors=None, title=""):
+def bar_compare(x, series_a, series_b, labels=("Series A","Series B"), title=""):
     fig = go.Figure()
-    fig.add_bar(name="Vorher", x=x, y=prev_vals, marker_color="#CBD5E1")
-    fig.add_bar(name="Nachher", x=x, y=cur_vals, marker_color=colors or ORANGE)
-    return apply_fig_style(fig, title, 300)
+    fig.add_bar(name=labels[0], x=x, y=series_a, marker_color=TEAL)
+    fig.add_bar(name=labels[1], x=x, y=series_b, marker_color=PURPLE)
+    return style_fig(fig, title, h=300)
 
-def area_soft(x, y1, y2=None, title=""):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y1, mode="lines", fill="tozeroy", line=dict(width=2))
-    if y2 is not None:
-        fig.add_scatter(x=x, y=y2, mode="lines", fill="tozeroy", line=dict(width=2, dash="dot"))
-    return apply_fig_style(fig, title, 260)
-
-def donut(value: float, title=""):
+def donut(value, title=""):
     fig = go.Figure(go.Pie(
         values=[value, 100-value],
         labels=[f"{value:.0f}%", ""],
-        hole=.75,
-        sort=False,
-        direction="clockwise",
+        hole=.7,
+        marker=dict(colors=[PURPLE, "#EEF2FF"]),
         textinfo="label",
-        marker=dict(colors=[ORANGE, "#F1F5F9"])
+        sort=False
     ))
     fig.update_traces(showlegend=False)
-    return apply_fig_style(fig, title, 280)
+    return style_fig(fig, title, h=260)
+
+def line_trend(x, y, title=""):
+    fig = go.Figure()
+    fig.add_scatter(x=x, y=y, mode="lines+markers", line=dict(width=3, color=PURPLE))
+    return style_fig(fig, title, h=260)
+
+def tiny_spark(x, y):
+    fig = go.Figure()
+    fig.add_scatter(x=x, y=y, mode="lines", line=dict(width=2, color="#C4B5FD"))
+    fig.update_layout(
+        template="plotly_white",
+        height=120, margin=dict(t=0,l=0,r=0,b=0), showlegend=False,
+        xaxis=dict(visible=False), yaxis=dict(visible=False)
+    )
+    return fig
