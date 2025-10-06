@@ -11,7 +11,7 @@ from charts import bar_compare, donut, line_trend, tiny_spark
 from data_utils import post_to_n8n, extract_metrics_from_excel, merge_data, delta
 
 # ---------- Config ----------
-N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL","https://tundtelectronics.app.n8n.cloud/webhook/process-business-data")
+N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL","https://tandtelectronics51.app.n8n.cloud/webhook/process-business-data")
 
 DEFAULT_DATA = {
     "belegt": 15, "frei": 5, "vertragsdauer_durchschnitt": 6.5, "reminder_automat": 12,
