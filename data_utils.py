@@ -1,13 +1,19 @@
-# data_utils.py
-import json, uuid, requests
-import pandas as pd
+import json, uuid, requests, pandas as pd
+
+TARGETS = {"belegungsgrad": 90, "überfällig": 3, "offen": 5}
 
 def delta(a, b):
     try: a=float(a); b=float(b)
     except: return 0.0, None
-    abs_ = b-a
-    pct_ = None if a==0 else (b-a)/a*100
+    abs_ = b-a; pct_ = None if a==0 else (b-a)/a*100
     return abs_, pct_
+
+def kpi_state(key: str, val: float) -> str:
+    t = TARGETS.get(key)
+    if t is None: return "neutral"
+    if key in ("überfällig","offen"):
+        return "good" if val <= t else ("warn" if val <= t*1.5 else "bad")
+    return "good" if val >= t else ("warn" if val >= t*0.8 else "bad")
 
 def post_to_n8n(url: str, file_tuple, session_id: str):
     r = requests.post(url, files={"file": file_tuple}, headers={"X-Session-ID": session_id}, timeout=60)
@@ -15,11 +21,10 @@ def post_to_n8n(url: str, file_tuple, session_id: str):
     except Exception: return r.status_code, r.text, None
 
 def extract_metrics_from_excel(df: pd.DataFrame) -> dict:
-    # gleiche Heuristik wie zuvor – mappt einfache Spaltennamen
     colmap = {
-        "belegt":"belegt", "frei":"frei", "vertragsdauer_durchschnitt":"vertragsdauer_durchschnitt",
-        "reminder_automat":"reminder_automat", "social_facebook":"social_facebook",
-        "social_google":"social_google", "belegungsgrad":"belegungsgrad",
+        "belegt":"belegt","frei":"frei","vertragsdauer_durchschnitt":"vertragsdauer_durchschnitt",
+        "reminder_automat":"reminder_automat","social_facebook":"social_facebook",
+        "social_google":"social_google","belegungsgrad":"belegungsgrad",
         "kundenherkunft_online":("kundenherkunft","Online"),
         "kundenherkunft_empfehlung":("kundenherkunft","Empfehlung"),
         "kundenherkunft_vorbeikommen":("kundenherkunft","Vorbeikommen"),
