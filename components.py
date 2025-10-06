@@ -1,39 +1,72 @@
-# components.py
-import streamlit as st
-from ui_theme import PURPLE, TEAL, WHITE, BORDER
+import json, pathlib, streamlit as st
+from ui_theme import WHITE, BORDER
+
+PRESET_DIR = pathlib.Path("presets"); PRESET_DIR.mkdir(exist_ok=True)
+PREFS_FILE = pathlib.Path(".user_prefs.json")
+
+def load_prefs(defaults: dict) -> dict:
+    if PREFS_FILE.exists():
+        try: return json.loads(PREFS_FILE.read_text())
+        except: return defaults
+    return defaults
+
+def save_prefs(prefs: dict):
+    PREFS_FILE.write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
+
+def save_preset(name: str, prefs: dict):
+    (PRESET_DIR / f"{name}.json").write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
+
+def load_preset(name: str) -> dict | None:
+    p = PRESET_DIR / f"{name}.json"
+    return json.loads(p.read_text()) if p.exists() else None
 
 def sidebar_nav():
     with st.sidebar:
-        st.markdown("### ")
         st.markdown(f"""
-        <div class="side-card" style="text-align:left;">
-          <a style="display:inline-block;background:{PURPLE};color:white;padding:10px 12px;border-radius:10px;text-decoration:none;">Register patient</a>
-          <div style="height:12px;"></div>
-          <ul style="list-style:none;padding-left:0;line-height:1.9;margin:0;">
-            <li>Patients</li>
-            <li><b>Overview</b></li>
-            <li>Map</li>
-            <li>Departments</li>
-            <li>Doctors</li>
-            <li>History</li>
-            <li>Settings</li>
-          </ul>
+        <div class="side-card" style="text-align:center;">
+          <div style="font-size:40px;line-height:1">🟣</div>
+          <div style="font-weight:800;margin-top:4px">Self-Storage</div>
+          <div style="font-size:12px;opacity:.8">Business Suite</div>
         </div>
         """, unsafe_allow_html=True)
+        st.markdown("#### Navigation")
+        section = st.radio(
+            label="Bereich wählen",
+            options=["Overview","Customers","Open Orders","Capacity","Social Media","Finance","Settings"],
+            index=0, label_visibility="collapsed"
+        )
+        st.markdown("#### Dashboard-Builder")
+        layout = st.selectbox("Layout", ["Executive (empfohlen)","Operations","Marketing"])
+        chart_style = st.selectbox("Diagramm-Stil", ["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"])
+        kpis = st.multiselect("KPIs anzeigen",
+            ["Belegt","Frei","Ø Vertragsdauer","Reminder","Belegungsgrad","Facebook","Google Reviews"],
+            default=["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"])
+        return {"section": section, "layout": layout, "chart_style": chart_style, "kpis": kpis}
 
-def kpi_row(items):
+def presets_ui(current_prefs: dict) -> dict | None:
+    st.markdown("#### Presets")
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input("Preset speichern als", placeholder="Executive-Board", label_visibility="collapsed")
+        if st.button("💾 Speichern", use_container_width=True):
+            if name.strip():
+                save_preset(name.strip(), current_prefs); st.success("Preset gespeichert.")
+    with c2:
+        choices = ["–"] + [p.stem for p in PRESET_DIR.glob("*.json")]
+        sel = st.selectbox("Preset laden", options=choices, label_visibility="collapsed")
+        if st.button("📥 Laden", use_container_width=True) and sel!="–":
+            return load_preset(sel)
+    return None
+
+def control_panel():
+    st.markdown("#### Anzeige filtern")
+    c1, c2 = st.columns(2)
+    with c1: period = st.selectbox("Zeitraum", ["Letzter Upload","Letzte 3 Uploads","Letzte 6 Uploads"])
+    with c2: compare = st.selectbox("Vergleichsbasis", ["Vorheriger Upload","Baseline (Start)"])
+    return {"period": period, "compare": compare}
+
+def kpi_deck(items: list[dict]):
     cols = st.columns(len(items))
     for i, it in enumerate(items):
         with cols[i]:
-            st.metric(it["label"], it["value"], delta=it.get("delta",""))
-
-def highlight_card(title, big_value, sublabel="This month", sparkline=None):
-    st.markdown(f"""
-    <div class="card" style="background:linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%); color:white;">
-      <div style="font-size:14px;opacity:.9">{sublabel}</div>
-      <div style="font-weight:900;font-size:36px;line-height:1.1;margin-top:6px;">{big_value}</div>
-      <div style="font-weight:700;font-size:15px;margin-top:2px;">{title}</div>
-    </div>
-    """, unsafe_allow_html=True)
-    if sparkline is not None:
-        st.plotly_chart(sparkline, use_container_width=True)
+            st.metric(it["label"], it["value"], it.get("delta",""))
