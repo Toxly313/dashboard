@@ -1,36 +1,72 @@
-# charts.py
-import plotly.graph_objects as go
-from ui_theme import style_fig, PURPLE, TEAL
+import json, pathlib, streamlit as st
+from ui_theme import WHITE, BORDER
 
-def bar_compare(x, series_a, series_b, labels=("Series A","Series B"), title=""):
-    fig = go.Figure()
-    fig.add_bar(name=labels[0], x=x, y=series_a, marker_color=TEAL)
-    fig.add_bar(name=labels[1], x=x, y=series_b, marker_color=PURPLE)
-    return style_fig(fig, title, h=300)
+PRESET_DIR = pathlib.Path("presets"); PRESET_DIR.mkdir(exist_ok=True)
+PREFS_FILE = pathlib.Path(".user_prefs.json")
 
-def donut(value, title=""):
-    fig = go.Figure(go.Pie(
-        values=[value, 100-value],
-        labels=[f"{value:.0f}%", ""],
-        hole=.7,
-        marker=dict(colors=[PURPLE, "#EEF2FF"]),
-        textinfo="label",
-        sort=False
-    ))
-    fig.update_traces(showlegend=False)
-    return style_fig(fig, title, h=260)
+def load_prefs(defaults: dict) -> dict:
+    if PREFS_FILE.exists():
+        try: return json.loads(PREFS_FILE.read_text())
+        except: return defaults
+    return defaults
 
-def line_trend(x, y, title=""):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y, mode="lines+markers", line=dict(width=3, color=PURPLE))
-    return style_fig(fig, title, h=260)
+def save_prefs(prefs: dict):
+    PREFS_FILE.write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
 
-def tiny_spark(x, y):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y, mode="lines", line=dict(width=2, color="#C4B5FD"))
-    fig.update_layout(
-        template="plotly_white",
-        height=120, margin=dict(t=0,l=0,r=0,b=0), showlegend=False,
-        xaxis=dict(visible=False), yaxis=dict(visible=False)
-    )
-    return fig
+def save_preset(name: str, prefs: dict):
+    (PRESET_DIR / f"{name}.json").write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
+
+def load_preset(name: str) -> dict | None:
+    p = PRESET_DIR / f"{name}.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+def sidebar_nav():
+    with st.sidebar:
+        st.markdown(f"""
+        <div class="side-card" style="text-align:center;">
+          <div style="font-size:40px;line-height:1">🟣</div>
+          <div style="font-weight:800;margin-top:4px">Self-Storage</div>
+          <div style="font-size:12px;opacity:.8">Business Suite</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("#### Navigation")
+        section = st.radio(
+            label="Bereich wählen",
+            options=["Overview","Customers","Open Orders","Capacity","Social Media","Finance","Settings"],
+            index=0, label_visibility="collapsed"
+        )
+        st.markdown("#### Dashboard-Builder")
+        layout = st.selectbox("Layout", ["Executive (empfohlen)","Operations","Marketing"])
+        chart_style = st.selectbox("Diagramm-Stil", ["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"])
+        kpis = st.multiselect("KPIs anzeigen",
+            ["Belegt","Frei","Ø Vertragsdauer","Reminder","Belegungsgrad","Facebook","Google Reviews"],
+            default=["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"])
+        return {"section": section, "layout": layout, "chart_style": chart_style, "kpis": kpis}
+
+def presets_ui(current_prefs: dict) -> dict | None:
+    st.markdown("#### Presets")
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input("Preset speichern als", placeholder="Executive-Board", label_visibility="collapsed")
+        if st.button("💾 Speichern", use_container_width=True):
+            if name.strip():
+                save_preset(name.strip(), current_prefs); st.success("Preset gespeichert.")
+    with c2:
+        choices = ["–"] + [p.stem for p in PRESET_DIR.glob("*.json")]
+        sel = st.selectbox("Preset laden", options=choices, label_visibility="collapsed")
+        if st.button("📥 Laden", use_container_width=True) and sel!="–":
+            return load_preset(sel)
+    return None
+
+def control_panel():
+    st.markdown("#### Anzeige filtern")
+    c1, c2 = st.columns(2)
+    with c1: period = st.selectbox("Zeitraum", ["Letzter Upload","Letzte 3 Uploads","Letzte 6 Uploads"])
+    with c2: compare = st.selectbox("Vergleichsbasis", ["Vorheriger Upload","Baseline (Start)"])
+    return {"period": period, "compare": compare}
+
+def kpi_deck(items: list[dict]):
+    cols = st.columns(len(items))
+    for i, it in enumerate(items):
+        with cols[i]:
+            st.metric(it["label"], it["value"], it.get("delta",""))
