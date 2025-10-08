@@ -1,6 +1,7 @@
 from datetime import datetime
 import streamlit as st
 
+# Farben
 PURPLE="#7C3AED"; TEAL="#14B8A6"; ACCENT="#F59E0B"
 BG="#F7F8FC"; WHITE="#FFFFFF"; BORDER="#E6EAF2"; TEXT="#0F172A"; MUTED="#667085"
 
@@ -50,9 +51,11 @@ def card_start(title=None, right_pill=None, alt=False):
                 st.markdown(f'<div style="text-align:right;"><span class="{klass}">{right_pill}</span></div>', unsafe_allow_html=True)
 
 def card_end(): st.markdown('</div>', unsafe_allow_html=True)
+
 def kpi_container_start(state="neutral"):
     klass = dict(good="kpi-good", warn="kpi-warn", bad="kpi-bad").get(state, "")
     st.markdown(f'<div class="card {klass}">', unsafe_allow_html=True)
+
 def kpi_container_end(): st.markdown('</div>', unsafe_allow_html=True)
 
 def style_fig(fig, title=None, h=300):
