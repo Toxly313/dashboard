@@ -1,13 +1,18 @@
-import os, uuid, json, pathlib
+import os, uuid, json
 from datetime import datetime
 import numpy as np, pandas as pd, streamlit as st
+
 from ui_theme import inject_css, header_bar, card_start, card_end, kpi_container_start, kpi_container_end
 from components import sidebar_nav, presets_ui, control_panel, kpi_deck, load_prefs, save_prefs
 from charts import bar_grouped, bar_stacked, line_chart, area_chart, donut_chart, sma_forecast, heatmap
 from insights import build_insights
 from data_utils import post_to_n8n, extract_metrics_from_excel, merge_data, delta, kpi_state
 
-N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL","https://tandtelectronics51.app.n8n.cloud/webhook/process-business-data")
+# ----------------- Konfiguration -----------------
+N8N_WEBHOOK_URL = os.environ.get(
+    "N8N_WEBHOOK_URL",
+    "https://tandtelectronics51.app.n8n.cloud/webhook/process-business-data"
+)
 
 DEFAULT_DATA = {
     "belegt": 18, "frei": 6, "vertragsdauer_durchschnitt": 7.2, "reminder_automat": 15,
@@ -19,6 +24,7 @@ DEFAULT_DATA = {
     "recommendations": [], "customer_message": ""
 }
 
+# ----------------- Init -----------------
 st.set_page_config(page_title="Self-Storage Pro", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
