@@ -1,4 +1,4 @@
-import json, uuid, requests, pandas as pd
+import json, requests, pandas as pd
 
 TARGETS = {"belegungsgrad": 90, "überfällig": 3, "offen": 5}
 
@@ -11,7 +11,7 @@ def delta(a, b):
 def kpi_state(key: str, val: float) -> str:
     t = TARGETS.get(key)
     if t is None: return "neutral"
-    if key in ("überfällig","offen"):
+    if key in ("überfällig","offen"):   # niedriger besser
         return "good" if val <= t else ("warn" if val <= t*1.5 else "bad")
     return "good" if val >= t else ("warn" if val >= t*0.8 else "bad")
 
