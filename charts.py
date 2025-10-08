@@ -46,3 +46,28 @@ def sma_forecast(y, window=3, steps=3):
 def heatmap(matrix, xlabels, ylabels, title="Cohort Retention", h=300):
     fig = go.Figure(go.Heatmap(z=matrix, x=xlabels, y=ylabels, colorscale="Blues"))
     return style_fig(fig, title, h)
+
+# --- Empfehlungen: horizontale Balken (Impact) & Ersparnis (€) ---
+from ui_theme import style_fig, PURPLE, TEAL
+import plotly.graph_objects as go
+
+def tips_impact_chart(items, h=280):
+    """
+    items: [{'title': str, 'impact_score': int(0-10)}]
+    """
+    labels = [it['title'] for it in items]
+    vals   = [float(it.get('impact_score', 0)) for it in items]
+    fig = go.Figure(go.Bar(x=vals, y=labels, orientation='h', marker_color=PURPLE))
+    fig.update_xaxes(title="Impact (0–10)", range=[0,10])
+    return style_fig(fig, "Priorität nach Impact", h)
+
+def tips_savings_chart(items, h=280):
+    """
+    items: [{'title': str, 'savings_eur': number}]
+    """
+    labels = [it['title'] for it in items]
+    vals   = [float(it.get('savings_eur', 0)) for it in items]
+    fig = go.Figure(go.Bar(x=vals, y=labels, orientation='h', marker_color=TEAL))
+    fig.update_xaxes(title="Potenzielle Ersparnis (€ / Monat)")
+    return style_fig(fig, "Monatliche Ersparnis (Schätzung)", h)
+
