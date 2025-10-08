@@ -94,3 +94,36 @@ def kpi_deck(items: list[dict]):
     for i, it in enumerate(items):
         with cols[i]:
             st.metric(it["label"], it["value"], it.get("delta",""))
+
+# --- RECHTES PRESET-PANEL (ausklappbar) ---
+import streamlit as st
+import pathlib, json
+
+PRESET_DIR = pathlib.Path("presets"); PRESET_DIR.mkdir(exist_ok=True)
+
+def _save_preset(name: str, prefs: dict):
+    (PRESET_DIR / f"{name}.json").write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
+
+def _load_preset(name: str) -> dict | None:
+    p = PRESET_DIR / f"{name}.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+def presets_panel_right(current_prefs: dict):
+    """Wird in app.py in der rechten Spalte aufgerufen."""
+    with st.expander("🎛️ Presets (Speichern/Laden)", expanded=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            name = st.text_input("Preset-Name", placeholder="z.B. Executive-Board")
+            if st.button("💾 Speichern", use_container_width=True, key="save_preset_right"):
+                if name.strip():
+                    _save_preset(name.strip(), current_prefs)
+                    st.success("Preset gespeichert.")
+        with c2:
+            choices = ["–"] + [p.stem for p in PRESET_DIR.glob("*.json")]
+            sel = st.selectbox("Preset wählen", options=choices, key="preset_select_right")
+            if st.button("📥 Laden", use_container_width=True, key="load_preset_right") and sel!="–":
+                loaded = _load_preset(sel)
+                if loaded:
+                    st.session_state["prefs"].update(loaded)
+                    st.success(f"Preset „{sel}“ geladen.")
+                    st.experimental_rerun()
