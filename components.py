@@ -19,6 +19,16 @@ def load_preset(name: str) -> dict | None:
     p = PRESET_DIR / f"{name}.json"
     return json.loads(p.read_text()) if p.exists() else None
 
+NAV_ITEMS = [
+    ("Overview",      "🏠  Overview"),
+    ("Customers",     "👥  Customers"),
+    ("Open Orders",   "📄  Open Orders"),
+    ("Capacity",      "📦  Capacity"),
+    ("Social Media",  "📣  Social Media"),
+    ("Finance",       "💶  Finance"),
+    ("Settings",      "⚙️  Settings"),
+]
+
 def sidebar_nav():
     with st.sidebar:
         st.markdown("""
@@ -28,18 +38,29 @@ def sidebar_nav():
           <div style="font-size:12px;opacity:.8">Business Suite</div>
         </div>
         """, unsafe_allow_html=True)
+
         st.markdown("#### Navigation")
+        # Radio mit Icon-Labels (wird per CSS hübsch gefärbt)
         section = st.radio(
-            label="Bereich wählen",
-            options=["Overview","Customers","Open Orders","Capacity","Social Media","Finance","Settings"],
-            index=0, label_visibility="collapsed"
+            "Bereich wählen",
+            options=[k for k,_ in NAV_ITEMS],
+            format_func=lambda k: dict(NAV_ITEMS)[k],
+            index=0,
+            label_visibility="collapsed",
         )
+
         st.markdown("#### Dashboard-Builder")
         layout = st.selectbox("Layout", ["Executive (empfohlen)","Operations","Marketing"])
         chart_style = st.selectbox("Diagramm-Stil", ["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"])
         kpis = st.multiselect("KPIs anzeigen",
             ["Belegt","Frei","Ø Vertragsdauer","Reminder","Belegungsgrad","Facebook","Google Reviews"],
             default=["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"])
+
+        # Aktives Element als Badge zeigen
+        st.markdown(f"<div class='side-card' style='text-align:center'>Aktiv: "
+                    f"<span class='pill'>{dict(NAV_ITEMS)[section]}</span></div>",
+                    unsafe_allow_html=True)
+
         return {"section": section, "layout": layout, "chart_style": chart_style, "kpis": kpis}
 
 def presets_ui(current_prefs: dict) -> dict | None:
