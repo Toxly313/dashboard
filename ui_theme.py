@@ -9,18 +9,49 @@ def inject_css():
     st.markdown(f"""
     <style>
       .stApp {{ background:{BG}; }}
-      html, body, [class*="css"] {{ font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial !important; }}
-      section[data-testid="stSidebar"] {{ background:{WHITE}; border-right:1px solid {BORDER}; }}
-      .side-card {{ background:{WHITE}; border:1px solid {BORDER}; border-radius:16px; padding:16px; box-shadow:0 1px 2px rgba(16,24,40,.05); margin-bottom:12px; }}
-      .card {{ background:{WHITE}; border:1px solid {BORDER}; border-radius:16px; padding:16px; box-shadow:0 1px 2px rgba(16,24,40,.05); margin-bottom:14px; }}
+      html, body, [class*="css"] {{
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial !important;
+      }}
+      /* Sidebar */
+      section[data-testid="stSidebar"] {{
+        background:{WHITE}; border-right:1px solid {BORDER};
+      }}
+      .side-card {{ background:{WHITE}; border:1px solid {BORDER}; border-radius:16px; padding:16px;
+                   box-shadow:0 1px 2px rgba(16,24,40,.05); margin-bottom:12px; }}
+
+      /* Navigation (Radio) hübscher machen */
+      section[data-testid="stSidebar"] div[role="radiogroup"] > label {{
+        display:block; border:1px solid {BORDER}; border-radius:12px; padding:10px 12px; margin-bottom:8px;
+        background:{WHITE}; transition:all .15s ease;
+      }}
+      section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {{
+        border-color:{PURPLE}; background:#F5F3FF;
+      }}
+      /* aktives Element optisch verstärken */
+      section[data-testid="stSidebar"] div[role="radiogroup"] input:checked + div {{
+        background:#F5F3FF; border-color:{PURPLE};
+      }}
+
+      /* Karten / KPIs */
+      .card {{ background:{WHITE}; border:1px solid {BORDER}; border-radius:16px; padding:16px;
+               box-shadow:0 1px 2px rgba(16,24,40,.05); margin-bottom:14px; }}
       .card h4 {{ margin:0 0 8px 0; font-weight:700; }}
       div[data-testid="stMetricValue"] {{ font-weight:800; }}
       div[data-testid="stMetricDelta"] {{ font-weight:600; }}
-      .pill {{ background:{PURPLE}12; color:{PURPLE}; border:1px solid {PURPLE}33; border-radius:999px; padding:2px 10px; font-size:12px; display:inline-block; }}
-      .pill-alt {{ background:{TEAL}12; color:{TEAL}; border:1px solid {TEAL}33; border-radius:999px; padding:2px 10px; font-size:12px; display:inline-block; }}
+      .pill {{ background:{PURPLE}12; color:{PURPLE}; border:1px solid {PURPLE}33; border-radius:999px;
+               padding:2px 10px; font-size:12px; display:inline-block; }}
+      .pill-alt {{ background:{TEAL}12; color:{TEAL}; border:1px solid {TEAL}33; border-radius:999px;
+                  padding:2px 10px; font-size:12px; display:inline-block; }}
       .kpi-good  {{ border-left: 6px solid #16A34A; padding-left: 10px; }}
       .kpi-warn  {{ border-left: 6px solid #F59E0B; padding-left: 10px; }}
       .kpi-bad   {{ border-left: 6px solid #EF4444; padding-left: 10px; }}
+
+      /* Große Drag&Drop Zone */
+      .dropzone {{
+        border:2px dashed {PURPLE}; border-radius:16px; background:#F9F5FF; padding:26px; text-align:center;
+      }}
+      .dropzone h4 {{ margin:6px 0 4px 0; font-weight:800; color:{TEXT}; }}
+      .dropzone p  {{ margin:0; color:{MUTED}; font-size:13px; }}
     </style>
     """, unsafe_allow_html=True)
 
