@@ -1,49 +1,71 @@
-# charts.py
-import numpy as np
-import plotly.graph_objects as go
-from ui_theme import style_fig, TEAL, PURPLE
+import json, pathlib, streamlit as st
 
-def bar_grouped(x, a, b, labels=("A","B"), title=None, h=300):
-    fig = go.Figure()
-    fig.add_bar(name=labels[0], x=x, y=a, marker_color=TEAL)
-    fig.add_bar(name=labels[1], x=x, y=b, marker_color=PURPLE)
-    return style_fig(fig, title, h)
+PRESET_DIR = pathlib.Path("presets"); PRESET_DIR.mkdir(exist_ok=True)
+PREFS_FILE = pathlib.Path(".user_prefs.json")
 
-def bar_stacked(x, a, b, labels=("A","B"), title=None, h=300):
-    fig = go.Figure()
-    fig.add_bar(name=labels[0], x=x, y=a, marker_color=TEAL)
-    fig.add_bar(name=labels[1], x=x, y=b, marker_color=PURPLE)
-    fig.update_layout(barmode="stack")
-    return style_fig(fig, title, h)
+def load_prefs(defaults: dict) -> dict:
+    if PREFS_FILE.exists():
+        try: return json.loads(PREFS_FILE.read_text())
+        except: return defaults
+    return defaults
 
-def line_chart(x, y1, y2=None, labels=("A","B"), title=None, h=300):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y1, mode="lines+markers", name=labels[0], line=dict(width=3, color=TEAL))
-    if y2 is not None:
-        fig.add_scatter(x=x, y=y2, mode="lines+markers", name=labels[1], line=dict(width=3, color=PURPLE))
-    return style_fig(fig, title, h)
+def save_prefs(prefs: dict):
+    PREFS_FILE.write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
 
-def area_chart(x, y1, y2=None, labels=("A","B"), title=None, h=260):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y1, mode="lines", fill="tozeroy", name=labels[0], line=dict(width=2, color=TEAL))
-    if y2 is not None:
-        fig.add_scatter(x=x, y=y2, mode="lines", fill="tozeroy", name=labels[1], line=dict(width=2, color=PURPLE, dash="dot"))
-    return style_fig(fig, title, h)
+def save_preset(name: str, prefs: dict):
+    (PRESET_DIR / f"{name}.json").write_text(json.dumps(prefs, ensure_ascii=False, indent=2))
 
-def donut_chart(value, title=None, h=260):
-    v = max(0, min(100, float(value or 0)))
-    fig = go.Figure(go.Pie(values=[v, 100-v], labels=[f"{v:.0f}%", ""], hole=.7,
-                           marker=dict(colors=[PURPLE, "#EEF2FF"]), sort=False, textinfo="label"))
-    fig.update_traces(showlegend=False)
-    return style_fig(fig, title, h)
+def load_preset(name: str) -> dict | None:
+    p = PRESET_DIR / f"{name}.json"
+    return json.loads(p.read_text()) if p.exists() else None
 
-def sma_forecast(y, window=3, steps=3):
-    if not y: return []
-    y = list(map(float, y))
-    base = np.convolve(y, np.ones(window)/window, mode="valid").tolist()
-    last = base[-1] if base else y[-1]
-    return [last for _ in range(steps)]
+def sidebar_nav():
+    with st.sidebar:
+        st.markdown("""
+        <div class="side-card" style="text-align:center;">
+          <div style="font-size:40px;line-height:1">🟣</div>
+          <div style="font-weight:800;margin-top:4px">Self-Storage</div>
+          <div style="font-size:12px;opacity:.8">Business Suite</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("#### Navigation")
+        section = st.radio(
+            label="Bereich wählen",
+            options=["Overview","Customers","Open Orders","Capacity","Social Media","Finance","Settings"],
+            index=0, label_visibility="collapsed"
+        )
+        st.markdown("#### Dashboard-Builder")
+        layout = st.selectbox("Layout", ["Executive (empfohlen)","Operations","Marketing"])
+        chart_style = st.selectbox("Diagramm-Stil", ["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"])
+        kpis = st.multiselect("KPIs anzeigen",
+            ["Belegt","Frei","Ø Vertragsdauer","Reminder","Belegungsgrad","Facebook","Google Reviews"],
+            default=["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"])
+        return {"section": section, "layout": layout, "chart_style": chart_style, "kpis": kpis}
 
-def heatmap(matrix, xlabels, ylabels, title="Cohort Retention", h=300):
-    fig = go.Figure(go.Heatmap(z=matrix, x=xlabels, y=ylabels, colorscale="Blues"))
-    return style_fig(fig, title, h)
+def presets_ui(current_prefs: dict) -> dict | None:
+    st.markdown("#### Presets")
+    c1, c2 = st.columns(2)
+    with c1:
+        name = st.text_input("Preset speichern als", placeholder="Executive-Board", label_visibility="collapsed")
+        if st.button("💾 Speichern", use_container_width=True):
+            if name.strip():
+                save_preset(name.strip(), current_prefs); st.success("Preset gespeichert.")
+    with c2:
+        choices = ["–"] + [p.stem for p in PRESET_DIR.glob("*.json")]
+        sel = st.selectbox("Preset laden", options=choices, label_visibility="collapsed")
+        if st.button("📥 Laden", use_container_width=True) and sel!="–":
+            return load_preset(sel)
+    return None
+
+def control_panel():
+    st.markdown("#### Anzeige filtern")
+    c1, c2 = st.columns(2)
+    with c1: period = st.selectbox("Zeitraum", ["Letzter Upload","Letzte 3 Uploads","Letzte 6 Uploads"])
+    with c2: compare = st.selectbox("Vergleichsbasis", ["Vorheriger Upload","Baseline (Start)"])
+    return {"period": period, "compare": compare}
+
+def kpi_deck(items: list[dict]):
+    cols = st.columns(len(items))
+    for i, it in enumerate(items):
+        with cols[i]:
+            st.metric(it["label"], it["value"], it.get("delta",""))
