@@ -8,7 +8,9 @@ from charts import bar_grouped, bar_stacked, line_chart, area_chart, donut_chart
 from insights import build_insights
 from data_utils import post_to_n8n, extract_metrics_from_excel, merge_data, delta, kpi_state
 
-# ----------------- Konfiguration -----------------
+# --------------------------------
+# Konfiguration
+# --------------------------------
 N8N_WEBHOOK_URL = os.environ.get(
     "N8N_WEBHOOK_URL",
     "https://tandtelectronics51.app.n8n.cloud/webhook/process-business-data"
@@ -24,11 +26,12 @@ DEFAULT_DATA = {
     "recommendations": [], "customer_message": ""
 }
 
-# ----------------- Init -----------------
+# --------------------------------
+# Init & Sidebar
+# --------------------------------
 st.set_page_config(page_title="Self-Storage Pro", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 inject_css()
 
-# Sidebar – Navigation & Builder
 nav = sidebar_nav()
 DEFAULT_PREFS = {"layout":"Executive (empfohlen)","chart_style":"Balken (gruppiert)","kpis":["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"]}
 user_prefs = load_prefs(DEFAULT_PREFS)
@@ -38,46 +41,76 @@ if loaded:
     user_prefs.update(loaded); save_prefs(user_prefs); st.experimental_rerun()
 save_prefs(user_prefs)
 
-# Upload in Sidebar
-with st.sidebar:
-    st.markdown("#### Upload")
-    files = st.file_uploader("CSV/JSON/Excel", type=["csv","json","xlsx"], accept_multiple_files=True, key=f"upl_{uuid.uuid4()}")
-    if st.button("Analysieren"):
-        main, excel_merge = None, {}
-        if files:
-            csv_json = [f for f in files if f.name.lower().endswith((".csv",".json"))]
-            xlsx     = [f for f in files if f.name.lower().endswith(".xlsx")]
-            main = csv_json[0] if csv_json else files[0]
-            for xf in xlsx:
-                try:
-                    import openpyxl
-                    df = pd.read_excel(xf)
-                    excel_merge = merge_data(excel_merge, extract_metrics_from_excel(df))
-                except Exception as e:
-                    st.error(f"Excel-Fehler ({xf.name}): {e}")
-        if not main:
-            st.error("Bitte eine Hauptdatei auswählen.")
-        else:
-            st.session_state["prev"] = st.session_state.get("data", DEFAULT_DATA).copy()
-            status, text, js = post_to_n8n(N8N_WEBHOOK_URL, (main.name, main.getvalue()), str(uuid.uuid4()))
-            base = js.get("metrics", js) if (status==200 and js) else st.session_state["prev"]
-            st.session_state["data"] = merge_data(base, excel_merge)
-            hist = st.session_state.get("history", [])
-            hist.append({"ts": datetime.now().isoformat(), "data": st.session_state["data"], "files":[f.name for f in (files or [])]})
-            st.session_state["history"] = hist
-
-# State init
+# State
 if "data" not in st.session_state: st.session_state["data"] = DEFAULT_DATA.copy()
 if "prev" not in st.session_state: st.session_state["prev"] = DEFAULT_DATA.copy()
 if "history" not in st.session_state: st.session_state["history"] = []
 
 data, prev = st.session_state["data"], st.session_state["prev"]
-filters = control_panel()
 
-# Header
+# --------------------------------
+# Header + DRAG & DROP Upload-Karte
+# --------------------------------
 header_bar("Overview")
 
+card_start("📥 Daten hochladen & analysieren", right_pill="Drag & Drop")
+# Große lila Dropzone + echtes file_uploader (Streamlit kann nativ Drag&Drop)
+st.markdown("""
+<div class="dropzone">
+  <h4>Dateien ablegen oder hier klicken</h4>
+  <p>Unterstützt: CSV, JSON, Excel (mehrere Dateien möglich). Eine Hauptdatei wird an n8n gesendet; Excel-Dateien werden zusätzlich gemerged.</p>
+</div>
+""", unsafe_allow_html=True)
+
+files = st.file_uploader(" ", type=["csv","json","xlsx"], accept_multiple_files=True, label_visibility="collapsed", key="main_drop")
+c1, c2, c3 = st.columns([0.25,0.25,0.5])
+with c1:
+    analyze = st.button("🚀 Analysieren", use_container_width=True, type="primary")
+with c2:
+    reset = st.button("🗑️ Zurücksetzen", use_container_width=True)
+
+if analyze:
+    main, excel_merge = None, {}
+    if files:
+        csv_json = [f for f in files if f.name.lower().endswith((".csv",".json"))]
+        xlsx     = [f for f in files if f.name.lower().endswith(".xlsx")]
+        main = csv_json[0] if csv_json else files[0]
+        for xf in xlsx:
+            try:
+                import openpyxl
+                df = pd.read_excel(xf)
+                excel_merge = merge_data(excel_merge, extract_metrics_from_excel(df))
+            except Exception as e:
+                st.error(f"Excel-Fehler ({xf.name}): {e}")
+    if not main:
+        st.error("Bitte mindestens eine Hauptdatei auswählen.")
+    else:
+        st.session_state["prev"] = st.session_state.get("data", DEFAULT_DATA).copy()
+        status, text, js = post_to_n8n(N8N_WEBHOOK_URL, (main.name, main.getvalue()), str(uuid.uuid4()))
+        base = js.get("metrics", js) if (status==200 and js) else st.session_state["prev"]
+        st.session_state["data"] = merge_data(base, excel_merge)
+        hist = st.session_state.get("history", [])
+        hist.append({"ts": datetime.now().isoformat(), "data": st.session_state["data"], "files":[f.name for f in (files or [])]})
+        st.session_state["history"] = hist
+        data, prev = st.session_state["data"], st.session_state["prev"]
+        st.success("Upload verarbeitet.")
+
+if reset:
+    st.session_state["data"] = DEFAULT_DATA.copy()
+    st.session_state["prev"] = DEFAULT_DATA.copy()
+    st.session_state["history"] = []
+    data, prev = st.session_state["data"], st.session_state["prev"]
+    st.info("Zurückgesetzt.")
+card_end()
+
+# --------------------------------
+# Control Panel (Filter)
+# --------------------------------
+filters = control_panel()
+
+# --------------------------------
 # KPI Deck mit Ampel
+# --------------------------------
 kpi_map = {
     "Belegt": ("belegt", None), "Frei": ("frei", None),
     "Ø Vertragsdauer": ("vertragsdauer_durchschnitt", " mo."),
@@ -97,7 +130,9 @@ kpi_container_start("good" if any(i["state"]=="good" for i in items) else "neutr
 kpi_deck([{"label":i["label"],"value":i["value"],"delta":i["delta"]} for i in items])
 kpi_container_end()
 
+# --------------------------------
 # Charts – Top Grid
+# --------------------------------
 labels = data.get("neukunden_labels", [])
 now_vals = data.get("neukunden_monat", [])
 prev_vals = prev.get("neukunden_monat", [0]*len(now_vals))
@@ -142,7 +177,9 @@ with top_right:
     st.caption("Online vs. andere Quellen")
     card_end()
 
+# --------------------------------
 # Bottom Grid
+# --------------------------------
 bot_left, bot_mid, bot_right = st.columns([0.45, 0.30, 0.25])
 with bot_left:
     card_start("Zeitentwicklung (Neukunden)")
@@ -184,7 +221,9 @@ with bot_right:
         st.caption("ΔNachfrage ≈ Elastizität × ΔPreis.")
     card_end()
 
-# KI-Empfehlungen
+# --------------------------------
+# KI-Empfehlungen + Exporte
+# --------------------------------
 card_start("🔎 KI-Empfehlungen & Analysen", right_pill="Automatisch")
 ins = build_insights(data)
 if not ins:
@@ -199,7 +238,6 @@ else:
         st.markdown("---")
 card_end()
 
-# NL-Query & Exporte
 with st.expander("💬 Frag dein Dashboard"):
     q = st.text_input("Beispiel: zeige kundenherkunft q2 vs q1 / belegung anzeigen")
     if q:
