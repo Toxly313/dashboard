@@ -29,7 +29,7 @@ NAV_ITEMS = [
     ("Settings",      "⚙️  Settings"),
 ]
 
-def sidebar_nav():
+def sidebar_nav(current_prefs: dict):
     with st.sidebar:
         st.markdown("""
         <div class="side-card" style="text-align:center;">
@@ -40,7 +40,6 @@ def sidebar_nav():
         """, unsafe_allow_html=True)
 
         st.markdown("#### Navigation")
-        # Radio mit Icon-Labels (wird per CSS hübsch gefärbt)
         section = st.radio(
             "Bereich wählen",
             options=[k for k,_ in NAV_ITEMS],
@@ -50,33 +49,38 @@ def sidebar_nav():
         )
 
         st.markdown("#### Dashboard-Builder")
-        layout = st.selectbox("Layout", ["Executive (empfohlen)","Operations","Marketing"])
-        chart_style = st.selectbox("Diagramm-Stil", ["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"])
+        layout = st.selectbox("Layout", ["Executive (empfohlen)","Operations","Marketing"], index=["Executive (empfohlen)","Operations","Marketing"].index(current_prefs.get("layout","Executive (empfohlen)")))
+        chart_style = st.selectbox("Diagramm-Stil", ["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"],
+                                   index=["Balken (gruppiert)","Balken (gestapelt)","Linie","Fläche","Donut"].index(current_prefs.get("chart_style","Balken (gruppiert)")))
         kpis = st.multiselect("KPIs anzeigen",
             ["Belegt","Frei","Ø Vertragsdauer","Reminder","Belegungsgrad","Facebook","Google Reviews"],
-            default=["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"])
-
-        # Aktives Element als Badge zeigen
+            default=current_prefs.get("kpis",["Belegt","Frei","Belegungsgrad","Ø Vertragsdauer"]))
         st.markdown(f"<div class='side-card' style='text-align:center'>Aktiv: "
                     f"<span class='pill'>{dict(NAV_ITEMS)[section]}</span></div>",
                     unsafe_allow_html=True)
-
         return {"section": section, "layout": layout, "chart_style": chart_style, "kpis": kpis}
 
-def presets_ui(current_prefs: dict) -> dict | None:
-    st.markdown("#### Presets")
-    c1, c2 = st.columns(2)
-    with c1:
-        name = st.text_input("Preset speichern als", placeholder="Executive-Board", label_visibility="collapsed")
-        if st.button("💾 Speichern", use_container_width=True):
-            if name.strip():
-                save_preset(name.strip(), current_prefs); st.success("Preset gespeichert.")
-    with c2:
-        choices = ["–"] + [p.stem for p in PRESET_DIR.glob("*.json")]
-        sel = st.selectbox("Preset laden", options=choices, label_visibility="collapsed")
-        if st.button("📥 Laden", use_container_width=True) and sel!="–":
-            return load_preset(sel)
-    return None
+def presets_panel_right(current_prefs: dict):
+    """Ausklappbares Preset-Panel am rechten Rand (global sichtbar)."""
+    right_col = st.columns([0.7, 0.3])[1]
+    with right_col:
+        with st.expander("🎛️ Presets (Speichern/Laden)", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                name = st.text_input("Preset-Name", placeholder="z.B. Executive-Board")
+                if st.button("💾 Speichern", use_container_width=True, key="save_preset"):
+                    if name.strip():
+                        save_preset(name.strip(), current_prefs); st.success("Preset gespeichert.")
+            with c2:
+                choices = ["–"] + [p.stem for p in PRESET_DIR.glob("*.json")]
+                sel = st.selectbox("Preset wählen", options=choices, key="preset_select")
+                if st.button("📥 Laden", use_container_width=True, key="load_preset") and sel!="–":
+                    loaded = load_preset(sel)
+                    if loaded:
+                        # Direkt in Session übernehmen
+                        st.session_state["prefs"].update(loaded)
+                        st.success(f"Preset „{sel}“ geladen. Seite neu laden, um Änderungen zu sehen.")
+                        st.experimental_rerun()
 
 def control_panel():
     st.markdown("#### Anzeige filtern")
