@@ -21,7 +21,7 @@ def main():
 # --------------------------------
 N8N_WEBHOOK_URL = os.environ.get(
     "N8N_WEBHOOK_URL",
-    "https://tandtelectronics51.app.n8n.cloud/webhook/process-business-data"
+    "https://tundtelectronics.app.n8n.cloud/webhook/process-business-data"
 )
 
 DEFAULT_DATA = {
