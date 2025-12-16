@@ -1,6 +1,9 @@
-[theme]
-primaryColor="#FF8A00"
-backgroundColor="#F6F7FB"
-secondaryBackgroundColor="#FFFFFF"
-textColor="#0F172A"
-font="sans serif"
+[server]
+port = 8080
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+serverAddress = "localhost"
+serverPort = 8080
