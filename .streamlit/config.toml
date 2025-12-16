@@ -6,7 +6,7 @@ enableXsrfProtection = false
 
 [browser]
 serverAddress = "localhost"
-serverPort = 8080
+serverPort = 8051
 
 [theme]
 primaryColor = "#4f8bf9"
