@@ -13,7 +13,7 @@ from data_utils import post_to_n8n, extract_metrics_from_excel, merge_data, delt
 # --------------------------------
 N8N_WEBHOOK_URL = os.environ.get(
     "N8N_WEBHOOK_URL",
-    "https://tandtelectronics51.app.n8n.cloud/webhook/process-business-data"
+    "https://tundtelectronics.app.n8n.cloud/webhook/process-business-data"
 )
 
 DEFAULT_DATA = {
