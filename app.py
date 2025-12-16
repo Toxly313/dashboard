@@ -8,6 +8,14 @@ from charts import bar_grouped, bar_stacked, line_chart, area_chart, donut_chart
 from insights import build_insights
 from data_utils import post_to_n8n, extract_metrics_from_excel, merge_data, delta, kpi_state
 
+def main():
+    # Debug: Port-Info anzeigen
+    import os
+    port = os.environ.get('PORT', 'Nicht gesetzt')
+    st.sidebar.caption(f"🚨 DEBUG: PORT={port}")
+    
+    # Rest des Codes...
+
 # --------------------------------
 # Konfiguration
 # --------------------------------
