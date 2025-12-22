@@ -16,18 +16,42 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ===== TENANT-KONFIGURATION (Später durch Datenbank ersetzen) =====
+TENANTS = {
+    "demo@kunde.de": {
+        "tenant_id": "kunde_demo_123",
+        "name": "Demo Kunde GmbH",
+        "plan": "pro",
+        "analyses_limit": 50,
+        "analyses_used": 0
+    },
+    "test@firma.de": {
+        "tenant_id": "firma_test_456", 
+        "name": "Test Firma AG",
+        "plan": "business",
+        "analyses_limit": 200,
+        "analyses_used": 0
+    }
+}
+
 # ===== HILFSFUNKTIONEN =====
-def post_to_n8n(url, file_tuple, uuid_str):
-    """Sendet Datei an n8n Webhook."""
+def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
+    """Sendet Datei an n8n Webhook MIT Tenant-ID."""
     import requests
     if not url or not url.startswith("http"):
         return 400, "Ungültige URL", None
+    
+    # MULTI-TENANT: Tenant-ID als Form-Data mitsenden
+    data = {
+        'tenant_id': tenant_id,
+        'uuid': uuid_str
+    }
     
     try:
         response = requests.post(
             url,
             files={'file': file_tuple} if file_tuple else None,
-            data={'uuid': uuid_str},
+            data=data,  # WICHTIG: tenant_id geht als Form-Data mit
             timeout=45,
             headers={'User-Agent': 'Dashboard-KI/1.0'}
         )
@@ -167,67 +191,170 @@ def main():
     if "last_raw_response" not in st.session_state:
         st.session_state.last_raw_response = None
     
-    # ===== SIDEBAR =====
+    # MULTI-TENANT: Login-Status
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "current_tenant" not in st.session_state:
+        st.session_state.current_tenant = None
+    
+    # ===== SIDEBAR MIT LOGIN =====
     with st.sidebar:
-        st.title("⚙️ Einstellungen")
+        st.title("🔐 Login & Einstellungen")
         
-        # Debug Info
-        st.caption(f"🔧 Railway Port: {os.environ.get('PORT', 'Nicht gesetzt')}")
-        
-        # n8n URL
-        n8n_url = st.text_input(
-            "n8n Webhook URL",
-            value=st.session_state.n8n_url,
-            placeholder="https://deine-n8n-url.com/webhook"
-        )
-        st.session_state.n8n_url = n8n_url
-        
-        # Debug Mode
-        st.session_state.debug_mode = st.checkbox("🐛 Debug-Modus aktivieren")
+        # Login/Logout Bereich
+        if not st.session_state.logged_in:
+            st.subheader("Anmelden")
+            email = st.text_input("E-Mail", key="login_email")
+            password = st.text_input("Passwort", type="password", key="login_password")
+            
+            if st.button("🚀 Anmelden", type="primary", use_container_width=True):
+                if email in TENANTS:
+                    # In Produktion: Passwort prüfen!
+                    st.session_state.logged_in = True
+                    st.session_state.current_tenant = TENANTS[email]
+                    st.success(f"Willkommen, {TENANTS[email]['name']}!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Ungültige E-Mail oder Passwort")
+        else:
+            # Eingeloggter Zustand
+            tenant = st.session_state.current_tenant
+            st.success(f"✅ Eingeloggt als: {tenant['name']}")
+            st.info(f"📋 Plan: {tenant['plan'].upper()}")
+            st.info(f"📊 Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+            
+            if st.button("🚪 Abmelden", use_container_width=True):
+                st.session_state.logged_in = False
+                st.session_state.current_tenant = None
+                st.session_state.data = DEFAULT_DATA.copy()
+                st.rerun()
         
         st.divider()
         
-        # Navigation
-        page = st.radio(
-            "Navigation",
-            ["📊 Übersicht", "👥 Kunden", "📦 Kapazität", "💰 Finanzen", "⚙️ System"]
-        )
-        
-        st.divider()
-        
-        # Reset Button
-        if st.button("🗑️ Zurücksetzen", use_container_width=True):
-            st.session_state.data = DEFAULT_DATA.copy()
-            st.session_state.prev = DEFAULT_DATA.copy()
-            st.session_state.history = []
-            st.session_state.last_raw_response = None
-            st.success("Zurückgesetzt!")
-            time.sleep(1)
-            st.rerun()
-        
-        # Debug Info anzeigen
-        if st.session_state.debug_mode and st.session_state.last_raw_response:
+        # Nur wenn eingeloggt: Einstellungen anzeigen
+        if st.session_state.logged_in:
+            st.subheader("⚙️ n8n Konfiguration")
+            
+            # n8n URL
+            n8n_url = st.text_input(
+                "n8n Webhook URL",
+                value=st.session_state.n8n_url,
+                placeholder="https://deine-n8n-url.com/webhook",
+                key="n8n_url_input"
+            )
+            st.session_state.n8n_url = n8n_url
+            
+            # Debug Mode
+            st.session_state.debug_mode = st.checkbox("🐛 Debug-Modus", key="debug_checkbox")
+            
             st.divider()
-            st.subheader("🔍 Letzte Rohantwort")
-            with st.expander("Anzeigen"):
-                st.json(st.session_state.last_raw_response)
+            
+            # Navigation (nur für eingeloggte Benutzer)
+            st.subheader("📱 Navigation")
+            page = st.radio(
+                "Menü",
+                ["📊 Übersicht", "👥 Kunden", "📦 Kapazität", "💰 Finanzen", "⚙️ System"],
+                key="nav_radio"
+            )
+            
+            st.divider()
+            
+            # Reset Button
+            if st.button("🗑️ Zurücksetzen", use_container_width=True, key="reset_btn"):
+                st.session_state.data = DEFAULT_DATA.copy()
+                st.session_state.prev = DEFAULT_DATA.copy()
+                st.session_state.history = []
+                st.session_state.last_raw_response = None
+                st.success("Zurückgesetzt!")
+                time.sleep(1)
+                st.rerun()
+            
+            # Debug Info anzeigen
+            if st.session_state.debug_mode and st.session_state.last_raw_response:
+                st.divider()
+                st.subheader("🔍 Letzte Rohantwort")
+                with st.expander("Anzeigen"):
+                    st.json(st.session_state.last_raw_response)
+        else:
+            # Nicht eingeloggt: Nur Info
+            st.info("👆 Bitte zuerst anmelden, um das Dashboard zu nutzen.")
+            page = "📊 Übersicht"  # Default-Seite
     
     # ===== HAUPTINHALT =====
-    if page == "📊 Übersicht":
-        render_overview()
-    elif page == "👥 Kunden":
-        render_customers()
-    elif page == "📦 Kapazität":
-        render_capacity()
-    elif page == "💰 Finanzen":
-        render_finance()
-    elif page == "⚙️ System":
-        render_system()
+    if not st.session_state.logged_in:
+        # Login-Seite anzeigen
+        render_login_page()
+    else:
+        # Eingeloggte Benutzer sehen das Dashboard
+        if page == "📊 Übersicht":
+            render_overview()
+        elif page == "👥 Kunden":
+            render_customers()
+        elif page == "📦 Kapazität":
+            render_capacity()
+        elif page == "💰 Finanzen":
+            render_finance()
+        elif page == "⚙️ System":
+            render_system()
 
 # ===== SEITENFUNKTIONEN =====
+def render_login_page():
+    """Login-Seite für nicht eingeloggte Benutzer."""
+    st.title("🔐 Self-Storage Business Intelligence")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        ## Willkommen!
+        
+        **KI-gestützte Analyse für Self-Storage Unternehmen:**
+        
+        ✅ **Auslastung optimieren**  
+        ✅ **Zahlungsmoral verbessern**  
+        ✅ **Marketing-ROI steigern**  
+        ✅ **Kundenbindung erhöhen**
+        
+        **Test-Zugänge:**
+        - **E-Mail:** `demo@kunde.de`
+        - **E-Mail:** `test@firma.de`
+        - **Passwort:** (beliebig für Demo)
+        """)
+    
+    with col2:
+        st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600", 
+                caption="Data-Driven Decisions for SelfStorage")
+    
+    st.divider()
+    
+    # Demo-Dashboard Vorschau
+    st.subheader("📊 Dashboard Vorschau")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Auslastung", "71%", "Verbesserungswürdig")
+    with col2:
+        st.metric("Ø Vertragsdauer", "8.5", "Monate")
+    with col3:
+        st.metric("Zahlungsmoral", "87%", "Bezugsrate")
+    with col4:
+        st.metric("Kunden-Zufriedenheit", "4.2/5", "Sterne")
+    
+    st.info("💡 **Hinweis:** Dies ist eine Demo-Version. Für vollen Zugang bitte anmelden.")
+
 def render_overview():
     """Hauptseite mit Upload und Analyse."""
-    st.title("📊 Dashboard Übersicht")
+    st.title(f"📊 Dashboard - {st.session_state.current_tenant['name']}")
+    
+    # Tenant-Info Box
+    tenant = st.session_state.current_tenant
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.info(f"**Tenant-ID:** {tenant['tenant_id']}")
+    with col2:
+        st.info(f"**Plan:** {tenant['plan'].upper()}")
+    with col3:
+        st.info(f"**Analysen:** {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
     
     # Upload Bereich
     st.header("📥 Daten analysieren")
@@ -235,16 +362,17 @@ def render_overview():
     uploaded_files = st.file_uploader(
         "Dateien hochladen (Excel/CSV)",
         type=["xlsx", "xls", "csv"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key="file_uploader"
     )
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        analyze_btn = st.button("🚀 KI-Analyse starten", type="primary", use_container_width=True)
+        analyze_btn = st.button("🚀 KI-Analyse starten", type="primary", use_container_width=True, key="analyze_btn")
     with col2:
-        mock_btn = st.button("🧪 Mock-Daten", use_container_width=True)
+        mock_btn = st.button("🧪 Mock-Daten", use_container_width=True, key="mock_btn")
     with col3:
-        if st.button("📋 Datenvorschau", use_container_width=True) and uploaded_files:
+        if st.button("📋 Datenvorschau", use_container_width=True, key="preview_btn") and uploaded_files:
             try:
                 df = pd.read_excel(uploaded_files[0])
                 st.dataframe(df.head(), width='stretch')
@@ -257,7 +385,7 @@ def render_overview():
             "belegt": 22, "frei": 3, "belegungsgrad": 88, 
             "vertragsdauer_durchschnitt": 9.1,
             "recommendations": ["Testempfehlung 1", "Testempfehlung 2"],
-            "customer_message": "Mock-Daten erfolgreich geladen."
+            "customer_message": f"Mock-Daten für {st.session_state.current_tenant['name']} geladen."
         }
         st.session_state.prev = st.session_state.data.copy()
         st.session_state.data = {**st.session_state.data, **mock_data}
@@ -265,7 +393,7 @@ def render_overview():
         time.sleep(1)
         st.rerun()
     
-    # Echte Analyse
+    # Echte Analyse (MIT TENANT-ID)
     if analyze_btn and uploaded_files:
         perform_analysis(uploaded_files)
     
@@ -317,8 +445,15 @@ def render_overview():
                 st.info(data["customer_message"])
 
 def perform_analysis(uploaded_files):
-    """Führt die KI-Analyse durch - KERNLOGIK FIXED."""
+    """Führt die KI-Analyse durch - JETZT MIT TENANT-ID."""
     with st.spinner("🧠 KI analysiert Daten... (ca. 15-45 Sekunden)"):
+        # Prüfe Tenant-Login
+        if not st.session_state.logged_in or not st.session_state.current_tenant:
+            st.error("❌ Kein Tenant eingeloggt")
+            return
+        
+        tenant_id = st.session_state.current_tenant['tenant_id']
+        
         # Dateien vorbereiten
         csv_json_files = [f for f in uploaded_files if f.name.lower().endswith((".csv", ".json"))]
         excel_files = [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]
@@ -341,10 +476,11 @@ def perform_analysis(uploaded_files):
             st.error("❌ Bitte gültige n8n URL in der Sidebar eingeben")
             return
         
-        # n8n aufrufen
+        # n8n aufrufen MIT TENANT-ID
         status, message, response = post_to_n8n(
             n8n_url,
             (main_file.name, main_file.getvalue()),
+            tenant_id,  # WICHTIG: Tenant-ID wird übergeben
             str(uuid.uuid4())
         )
         
@@ -356,6 +492,7 @@ def perform_analysis(uploaded_files):
             with st.expander("🔍 Debug: n8n Kommunikation", expanded=True):
                 st.write(f"**Status:** {status}")
                 st.write(f"**Meldung:** {message}")
+                st.write(f"**Tenant-ID:** {tenant_id}")
                 if response:
                     st.write("**Rohantwort von n8n:**")
                     st.json(response)
@@ -364,15 +501,13 @@ def perform_analysis(uploaded_files):
             st.error(f"❌ n8n-Fehler: {message}")
             return
         
-        # ===== KRITISCHE DATENVERARBEITUNG =====
-        # Dein n8n sendet doppelt verschachtelte Daten: {metrics: {metrics: {...}}}
+        # ===== DATENVERARBEITUNG =====
         processed_data = None
         
         if isinstance(response, dict):
-            # FALL A: Doppelt verschachtelt (dein aktuelles Problem!)
+            # FALL A: Doppelt verschachtelt
             if 'metrics' in response and isinstance(response['metrics'], dict):
                 if 'metrics' in response['metrics']:
-                    # Doppelte Verschachtelung: metrics -> metrics -> daten
                     processed_data = {
                         'metrics': response['metrics'].get('metrics', {}),
                         'recommendations': response.get('recommendations', []),
@@ -381,14 +516,13 @@ def perform_analysis(uploaded_files):
                     if st.session_state.debug_mode:
                         st.info("🔄 Doppelte Verschachtelung erkannt und korrigiert")
                 else:
-                    # Einfache Verschachtelung: metrics -> daten
                     processed_data = {
                         'metrics': response['metrics'],
                         'recommendations': response.get('recommendations', []),
                         'customer_message': response.get('customer_message', '')
                     }
             
-            # FALL B: Flaches Format (nach Korrektur der n8n-Node)
+            # FALL B: Flaches Format
             elif all(k in response for k in ['metrics', 'recommendations', 'customer_message']):
                 processed_data = response
             
@@ -405,7 +539,6 @@ def perform_analysis(uploaded_files):
             json_str = str(response)
             extracted = extract_json_from_markdown(json_str)
             if extracted and isinstance(extracted, dict):
-                # Wiederhole die gleiche Logik mit extrahierten Daten
                 if 'metrics' in extracted:
                     processed_data = {
                         'metrics': extracted.get('metrics', {}),
@@ -415,29 +548,39 @@ def perform_analysis(uploaded_files):
         
         # ===== ERGEBNIS VERARBEITEN =====
         if processed_data:
-            # Metriken extrahieren
             metrics_data = processed_data.get('metrics', {})
             recommendations = processed_data.get('recommendations', [])
             customer_message = processed_data.get('customer_message', '')
+            
+            # Tenant-spezifische Nachricht
+            tenant_name = st.session_state.current_tenant['name']
+            if customer_message and "Kunde" in customer_message:
+                customer_message = customer_message.replace("Kunde", tenant_name)
             
             # Mit Excel-Daten mergen
             merged_data = merge_data(metrics_data, excel_merge)
             merged_data['recommendations'] = recommendations
             merged_data['customer_message'] = customer_message
+            merged_data['tenant_id'] = tenant_id  # Tenant-ID in den Daten speichern
             
             # Session State aktualisieren
             st.session_state.prev = st.session_state.data.copy()
             st.session_state.data = merged_data
             
-            # History speichern
+            # History speichern (tenant-spezifisch)
             st.session_state.history.append({
                 "ts": datetime.now().isoformat(),
                 "data": merged_data.copy(),
                 "files": [f.name for f in uploaded_files],
+                "tenant_id": tenant_id,
                 "source": "n8n"
             })
             
-            st.success(f"✅ KI-Analyse erfolgreich! ({len(recommendations)} Empfehlungen)")
+            # Analyses-Usage erhöhen (Demo - später Datenbank)
+            if 'analyses_used' in st.session_state.current_tenant:
+                st.session_state.current_tenant['analyses_used'] += 1
+            
+            st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}! ({len(recommendations)} Empfehlungen)")
             time.sleep(1)
             st.rerun()
         else:
@@ -447,24 +590,7 @@ def perform_analysis(uploaded_files):
                     st.write("Rohdaten-Typ:", type(response))
                     st.write("Rohdaten:", response)
 
-def render_kpi_grid():
-    """Zeigt KPIs in einem Grid."""
-    data = st.session_state.data
-    
-    metrics = [
-        ("Belegt", "belegt", ""),
-        ("Frei", "frei", ""),
-        ("Belegungsgrad", "belegungsgrad", "%"),
-        ("Ø Vertragsdauer", "vertragsdauer_durchschnitt", " Monate"),
-        ("Facebook", "social_facebook", ""),
-        ("Google", "social_google", "")
-    ]
-    
-    cols = st.columns(len(metrics))
-    for idx, (label, key, suffix) in enumerate(metrics):
-        with cols[idx]:
-            value = data.get(key, 0)
-            st.metric(label, f"{value}{suffix}")
+# ... (Die restlichen Funktionen render_customers, render_capacity, render_finance, render_system bleiben gleich) ...
 
 def render_customers():
     """Kundenseite."""
@@ -564,6 +690,17 @@ def render_system():
     st.title("⚙️ System & Export")
     
     data = st.session_state.data
+    tenant = st.session_state.current_tenant
+    
+    # Tenant Info
+    st.header("Tenant-Information")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"**Tenant-ID:** {tenant['tenant_id']}")
+        st.info(f"**Firmenname:** {tenant['name']}")
+    with col2:
+        st.info(f"**Abo-Plan:** {tenant['plan'].upper()}")
+        st.info(f"**Analysen genutzt:** {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
     
     # Export
     st.header("Daten exportieren")
@@ -574,7 +711,7 @@ def render_system():
         st.download_button(
             "⬇️ CSV Export",
             csv,
-            f"storage_{datetime.now().strftime('%Y%m%d')}.csv",
+            f"storage_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.csv",
             "text/csv",
             use_container_width=True
         )
@@ -583,22 +720,23 @@ def render_system():
         st.download_button(
             "⬇️ JSON Export",
             json_str,
-            f"storage_{datetime.now().strftime('%Y%m%d')}.json",
+            f"storage_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json",
             "application/json",
             use_container_width=True
         )
     
-    # History
+    # History (tenant-spezifisch)
     st.header("Analyserverlauf")
-    history = st.session_state.history
+    history = [h for h in st.session_state.history if h.get('tenant_id') == tenant['tenant_id']]
     
     if history:
         for i, entry in enumerate(reversed(history[-3:]), 1):
             with st.expander(f"Analyse {i} - {entry['ts'][11:16]}"):
-                st.write(f"Dateien: {entry['files']}")
-                st.write(f"Quelle: {entry.get('source', 'n8n')}")
+                st.write(f"**Dateien:** {entry['files']}")
+                st.write(f"**Tenant:** {entry.get('tenant_id', 'N/A')}")
+                st.write(f"**Quelle:** {entry.get('source', 'n8n')}")
     else:
-        st.info("Noch keine Analysen")
+        st.info("Noch keine Analysen für diesen Tenant")
     
     # Systeminfo
     st.header("Systeminformation")
