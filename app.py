@@ -2,6 +2,11 @@ import os, uuid, json, re  # re hier hinzufügen!
 from datetime import datetime
 import numpy as np, pandas as pd, streamlit as st
 
+# Force PORT from Railway
+if 'PORT' in os.environ:
+    os.environ['STREAMLIT_SERVER_PORT'] = os.environ['PORT']
+    os.environ['STREAMLIT_SERVER_ADDRESS'] = '0.0.0.0'
+
 # ===== KONFIGURATION =====
 st.set_page_config(
     page_title="Self-Storage Pro Dashboard",
