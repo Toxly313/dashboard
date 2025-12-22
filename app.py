@@ -1,6 +1,6 @@
-import os, uuid, json, streamlit as st
+import os, uuid, json, re  # re hier hinzufügen!
 from datetime import datetime
-import numpy as np, pandas as pd
+import numpy as np, pandas as pd, streamlit as st
 
 # ===== KONFIGURATION =====
 st.set_page_config(
@@ -451,8 +451,6 @@ def render_kpis():
 
 def perform_analysis(uploaded_files):
     """Führt die KI-Analyse durch"""
-    import re
-    
     with st.spinner("🧠 KI analysiert Daten... (kann bis zu 45s dauern)"):
         # Dateien verarbeiten
         csv_json_files = [f for f in uploaded_files if f.name.lower().endswith((".csv", ".json"))]
