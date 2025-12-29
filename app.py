@@ -36,25 +36,33 @@ TENANTS = {
 
 # ===== HILFSFUNKTIONEN =====
 def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
-    """Sendet Datei an n8n Webhook MIT Tenant-ID."""
+    """Sendet Datei an n8n Webhook MIT Tenant-ID im Formular."""
     import requests
     if not url or not url.startswith("http"):
         return 400, "Ungültige URL", None
     
-    # MULTI-TENANT: Tenant-ID als Form-Data mitsenden
+    # 🎯 WICHTIG: Tenant-ID und UUID als Form-Data mitsenden
+    # Das ist der Schlüssel - n8n erwartet diese im formData-Teil des Requests
     data = {
         'tenant_id': tenant_id,
         'uuid': uuid_str
     }
     
+    # Debug-Info (wird in Streamlit-Logs angezeigt)
+    print(f"[DEBUG] Sende an n8n: tenant_id={tenant_id}, uuid={uuid_str}")
+    
     try:
+        # 🚀 Multipart-Request: Datei + Formulardaten
         response = requests.post(
             url,
             files={'file': file_tuple} if file_tuple else None,
-            data=data,  # WICHTIG: tenant_id geht als Form-Data mit
+            data=data,  # ✅ WICHTIG: tenant_id als Form-Data-Feld
             timeout=45,
             headers={'User-Agent': 'Dashboard-KI/1.0'}
         )
+        
+        # Debug-Info für Response
+        print(f"[DEBUG] n8n Response: Status={response.status_code}")
         
         if response.status_code != 200:
             error_msg = f"n8n Fehler {response.status_code}"
@@ -224,6 +232,9 @@ def main():
             st.info(f"📋 Plan: {tenant['plan'].upper()}")
             st.info(f"📊 Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
             
+            # ✅ TENANT-ID ANZEIGEN (für Debugging wichtig)
+            st.info(f"🔑 Tenant-ID: `{tenant['tenant_id']}`")
+            
             if st.button("🚪 Abmelden", use_container_width=True):
                 st.session_state.logged_in = False
                 st.session_state.current_tenant = None
@@ -240,10 +251,13 @@ def main():
             n8n_url = st.text_input(
                 "n8n Webhook URL",
                 value=st.session_state.n8n_url,
-                placeholder="https://deine-n8n-url.com/webhook",
+                placeholder="https://tundtelectronics.app.n8n.cloud/webhook/process-business-data",
                 key="n8n_url_input"
             )
             st.session_state.n8n_url = n8n_url
+            
+            if n8n_url:
+                st.caption(f"Verwendet: `{n8n_url[:50]}...`")
             
             # Debug Mode
             st.session_state.debug_mode = st.checkbox("🐛 Debug-Modus", key="debug_checkbox")
@@ -317,8 +331,8 @@ def render_login_page():
         ✅ **Kundenbindung erhöhen**
         
         **Test-Zugänge:**
-        - **E-Mail:** `demo@kunde.de`
-        - **E-Mail:** `test@firma.de`
+        - **E-Mail:** `demo@kunde.de` → Tenant-ID: `kunde_demo_123`
+        - **E-Mail:** `test@firma.de` → Tenant-ID: `firma_test_456`
         - **Passwort:** (beliebig für Demo)
         """)
     
@@ -344,17 +358,26 @@ def render_login_page():
 
 def render_overview():
     """Hauptseite mit Upload und Analyse."""
-    st.title(f"📊 Dashboard - {st.session_state.current_tenant['name']}")
+    tenant = st.session_state.current_tenant
+    st.title(f"📊 Dashboard - {tenant['name']}")
     
     # Tenant-Info Box
-    tenant = st.session_state.current_tenant
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.info(f"**Tenant-ID:** {tenant['tenant_id']}")
+        st.info(f"**Tenant-ID:** `{tenant['tenant_id']}`")
     with col2:
         st.info(f"**Plan:** {tenant['plan'].upper()}")
     with col3:
         st.info(f"**Analysen:** {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+    with col4:
+        st.info(f"**Unternehmen:** {tenant['name']}")
+    
+    # 🎯 WICHTIGER HINWEIS ZUR TENANT-ID
+    st.info("""
+    **ℹ️ Wichtig für n8n-Kommunikation:** 
+    Die Tenant-ID `{tenant_id}` wird automatisch mit jeder hochgeladenen Datei an n8n gesendet.
+    Diese ID wird verwendet, um Ihre Daten in der Datenbank zu identifizieren.
+    """.format(tenant_id=tenant['tenant_id']))
     
     # Upload Bereich
     st.header("📥 Daten analysieren")
@@ -376,6 +399,7 @@ def render_overview():
             try:
                 df = pd.read_excel(uploaded_files[0])
                 st.dataframe(df.head(), width='stretch')
+                st.caption(f"Datei: {uploaded_files[0].name} | Größe: {len(uploaded_files[0].getvalue())} bytes")
             except:
                 st.warning("Konnte Datei nicht lesen")
     
@@ -384,8 +408,12 @@ def render_overview():
         mock_data = {
             "belegt": 22, "frei": 3, "belegungsgrad": 88, 
             "vertragsdauer_durchschnitt": 9.1,
-            "recommendations": ["Testempfehlung 1", "Testempfehlung 2"],
-            "customer_message": f"Mock-Daten für {st.session_state.current_tenant['name']} geladen."
+            "recommendations": [
+                f"Testempfehlung für {tenant['name']}",
+                "Optimieren Sie Ihre Lagerauslastung",
+                "Starten Sie eine Marketing-Kampagne"
+            ],
+            "customer_message": f"Mock-Daten für {tenant['name']} (Tenant-ID: {tenant['tenant_id']}) geladen."
         }
         st.session_state.prev = st.session_state.data.copy()
         st.session_state.data = {**st.session_state.data, **mock_data}
@@ -453,6 +481,9 @@ def perform_analysis(uploaded_files):
             return
         
         tenant_id = st.session_state.current_tenant['tenant_id']
+        tenant_name = st.session_state.current_tenant['name']
+        
+        st.info(f"📤 Sende Daten an n8n mit Tenant-ID: `{tenant_id}`")
         
         # Dateien vorbereiten
         csv_json_files = [f for f in uploaded_files if f.name.lower().endswith((".csv", ".json"))]
@@ -476,11 +507,11 @@ def perform_analysis(uploaded_files):
             st.error("❌ Bitte gültige n8n URL in der Sidebar eingeben")
             return
         
-        # n8n aufrufen MIT TENANT-ID
+        # 🚀 n8n aufrufen MIT TENANT-ID (wichtigste Änderung!)
         status, message, response = post_to_n8n(
             n8n_url,
-            (main_file.name, main_file.getvalue()),
-            tenant_id,  # WICHTIG: Tenant-ID wird übergeben
+            (main_file.name, main_file.getvalue(), main_file.type),
+            tenant_id,  # ✅ Tenant-ID wird als Formularfeld gesendet
             str(uuid.uuid4())
         )
         
@@ -492,13 +523,17 @@ def perform_analysis(uploaded_files):
             with st.expander("🔍 Debug: n8n Kommunikation", expanded=True):
                 st.write(f"**Status:** {status}")
                 st.write(f"**Meldung:** {message}")
-                st.write(f"**Tenant-ID:** {tenant_id}")
+                st.write(f"**Tenant-ID:** `{tenant_id}`")
+                st.write(f"**Tenant-Name:** {tenant_name}")
+                st.write(f"**n8n URL:** {n8n_url}")
                 if response:
                     st.write("**Rohantwort von n8n:**")
                     st.json(response)
         
         if status != 200 or not response:
             st.error(f"❌ n8n-Fehler: {message}")
+            if status == 400:
+                st.info("💡 Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
         
         # ===== DATENVERARBEITUNG =====
@@ -553,7 +588,6 @@ def perform_analysis(uploaded_files):
             customer_message = processed_data.get('customer_message', '')
             
             # Tenant-spezifische Nachricht
-            tenant_name = st.session_state.current_tenant['name']
             if customer_message and "Kunde" in customer_message:
                 customer_message = customer_message.replace("Kunde", tenant_name)
             
@@ -573,6 +607,7 @@ def perform_analysis(uploaded_files):
                 "data": merged_data.copy(),
                 "files": [f.name for f in uploaded_files],
                 "tenant_id": tenant_id,
+                "tenant_name": tenant_name,
                 "source": "n8n"
             })
             
@@ -581,6 +616,7 @@ def perform_analysis(uploaded_files):
                 st.session_state.current_tenant['analyses_used'] += 1
             
             st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}! ({len(recommendations)} Empfehlungen)")
+            st.balloons()
             time.sleep(1)
             st.rerun()
         else:
@@ -589,8 +625,8 @@ def perform_analysis(uploaded_files):
                 with st.expander("🔍 Problem-Details"):
                     st.write("Rohdaten-Typ:", type(response))
                     st.write("Rohdaten:", response)
-
-# ... (Die restlichen Funktionen render_customers, render_capacity, render_finance, render_system bleiben gleich) ...
+            else:
+                st.info("💡 Aktivieren Sie den Debug-Modus für mehr Details.")
 
 def render_customers():
     """Kundenseite."""
@@ -696,7 +732,7 @@ def render_system():
     st.header("Tenant-Information")
     col1, col2 = st.columns(2)
     with col1:
-        st.info(f"**Tenant-ID:** {tenant['tenant_id']}")
+        st.info(f"**Tenant-ID:** `{tenant['tenant_id']}`")
         st.info(f"**Firmenname:** {tenant['name']}")
     with col2:
         st.info(f"**Abo-Plan:** {tenant['plan'].upper()}")
@@ -731,10 +767,14 @@ def render_system():
     
     if history:
         for i, entry in enumerate(reversed(history[-3:]), 1):
-            with st.expander(f"Analyse {i} - {entry['ts'][11:16]}"):
-                st.write(f"**Dateien:** {entry['files']}")
-                st.write(f"**Tenant:** {entry.get('tenant_id', 'N/A')}")
+            with st.expander(f"Analyse {i} - {entry['ts'][11:16]} ({len(entry.get('files', []))} Dateien)"):
+                st.write(f"**Dateien:** {', '.join(entry['files'])}")
+                st.write(f"**Tenant:** {entry.get('tenant_name', entry.get('tenant_id', 'N/A'))}")
                 st.write(f"**Quelle:** {entry.get('source', 'n8n')}")
+                if entry.get('data', {}).get('recommendations'):
+                    st.write("**Empfehlungen:**")
+                    for rec in entry['data']['recommendations'][:2]:
+                        st.write(f"- {rec}")
     else:
         st.info("Noch keine Analysen für diesen Tenant")
     
@@ -748,6 +788,17 @@ def render_system():
     with col2:
         st.metric("n8n URL", "Gesetzt" if st.session_state.n8n_url else "Fehlt")
         st.metric("Session", "Aktiv")
+    
+    # n8n Workflow Info
+    st.header("n8n Integration")
+    st.info("""
+    **Datenfluss:** Streamlit → n8n Webhook → KI-Analyse → Datenbank → Streamlit
+    
+    **Wichtig:**
+    1. Tenant-ID wird automatisch an n8n gesendet
+    2. n8n erwartet tenant_id im `formData` Teil des Requests
+    3. Die Antwort wird automatisch für Ihr Dashboard verarbeitet
+    """)
 
 # ===== APP START =====
 if __name__ == "__main__":
