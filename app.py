@@ -36,52 +36,72 @@ TENANTS = {
 
 # ===== HILFSFUNKTIONEN =====
 def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
-    """Sendet Datei an n8n Webhook als JSON."""
+    """Sendet Datei an n8n Webhook - VERBESSERTE VERSION"""
     import requests
-    import base64
+    import json
     
-    if not url or not url.startswith("http"):
-        return 400, "Ungültige URL", None
-    
-    # JSON Body vorbereiten
-    payload = {
-        'tenant_id': tenant_id,
-        'uuid': uuid_str,
-        'file': None
-    }
-    
-    # Datei als Base64 kodieren (falls vorhanden)
-    if file_tuple:
-        file_content = file_tuple[1]
-        file_b64 = base64.b64encode(file_content).decode('utf-8')
-        payload['file'] = {
-            'filename': file_tuple[0],
-            'content_type': file_tuple[2],
-            'data': file_b64,
-            'size': len(file_content)
-        }
-    
-    print(f"[DEBUG] JSON Payload: tenant_id={tenant_id}, uuid={uuid_str}")
+    print(f"\n🔧 Sende an n8n: {url}")
+    print(f"🔧 Tenant-ID: {tenant_id}")
+    print(f"🔧 UUID: {uuid_str}")
+    print(f"🔧 Datei: {file_tuple[0] if file_tuple else 'Keine'}")
     
     try:
-        response = requests.post(
-            url,
-            json=payload,  # WICHTIG: json statt data
-            timeout=45,
-            headers={
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
+        # 🎯 OPTION 1: Als JSON senden (einfacher)
+        if not file_tuple:
+            # Nur Daten, keine Datei
+            payload = {
+                "tenant_id": tenant_id,
+                "uuid": uuid_str,
+                "data": "business_analysis"
             }
-        )
+            
+            print(f"📤 JSON Payload: {json.dumps(payload)}")
+            
+            response = requests.post(
+                url,
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+                timeout=30
+            )
+            
+        else:
+            # 🎯 OPTION 2: Multipart mit Datei
+            files = {
+                'file': (file_tuple[0], file_tuple[1], file_tuple[2])
+            }
+            
+            # WICHTIG: Form-Data als dictionary, nicht als string
+            data = {
+                'tenant_id': tenant_id,
+                'uuid': uuid_str
+            }
+            
+            print(f"📤 Form-Data: {data}")
+            print(f"📤 Files: {file_tuple[0]} ({len(file_tuple[1])} bytes)")
+            
+            response = requests.post(
+                url,
+                files=files,
+                data=data,
+                timeout=45
+            )
         
-        print(f"[DEBUG] n8n Response: Status={response.status_code}")
+        print(f"✅ Response Status: {response.status_code}")
         
         if response.status_code != 200:
-            return response.status_code, f"Fehler: {response.text[:100]}", None
+            print(f"❌ Response Text: {response.text[:500]}")
+            return response.status_code, f"Fehler: {response.status_code}", None
         
-        return response.status_code, "Success", response.json()
+        try:
+            json_response = response.json()
+            print(f"✅ JSON Response erhalten")
+            return response.status_code, "Success", json_response
+        except:
+            print(f"⚠️ Kein JSON: {response.text[:500]}")
+            return response.status_code, "Success (kein JSON)", response.text
             
     except Exception as e:
+        print(f"💥 Exception: {str(e)}")
         return 500, f"Fehler: {str(e)}", None
     
     # Debug-Info (wird in Streamlit-Logs angezeigt)
