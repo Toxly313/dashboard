@@ -36,71 +36,80 @@ TENANTS = {
 
 # ===== HILFSFUNKTIONEN =====
 def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
-    """Sendet Datei an n8n Webhook - JSON VERSION"""
+    """Sendet Daten an n8n - REINE JSON VERSION"""
     import requests
-    import base64
     import json
+    import base64
     
-    print(f"\n🔧 Sende an n8n (JSON): {url}")
-    print(f"🔧 Tenant-ID: {tenant_id}")
-    print(f"🔧 UUID: {uuid_str}")
+    print(f"\n🚀 Sende REINES JSON an n8n")
+    print(f"URL: {url}")
+    print(f"Tenant-ID: {tenant_id}")
+    print(f"UUID: {uuid_str}")
     
-    try:
-        # JSON Payload vorbereiten
-        payload = {
-            "tenant_id": tenant_id,
-            "uuid": uuid_str,
-            "metadata": {
-                "source": "streamlit",
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-            }
+    # 1. Erstelle JSON Payload
+    payload = {
+        "tenant_id": tenant_id,
+        "uuid": uuid_str,
+        "metadata": {
+            "source": "streamlit",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "customer_email": "demo@kunde.de"  # Beispiel
+        }
+    }
+    
+    # 2. Datei als Base64 hinzufügen (falls vorhanden)
+    if file_tuple:
+        file_name, file_content, file_type = file_tuple
+        
+        # Kodiere als Base64
+        file_b64 = base64.b64encode(file_content).decode('utf-8')
+        
+        payload["file"] = {
+            "filename": file_name,
+            "content_type": file_type,
+            "data": file_b64,  # Base64 encoded
+            "size": len(file_content)
         }
         
-        # Wenn Datei vorhanden, als Base64 kodieren
-        if file_tuple:
-            file_name, file_content, file_type = file_tuple
-            file_b64 = base64.b64encode(file_content).decode('utf-8')
-            
-            payload["file"] = {
-                "filename": file_name,
-                "content_type": file_type,
-                "data": file_b64,
-                "size": len(file_content)
-            }
-            print(f"📎 Datei als Base64: {file_name} ({len(file_content)} bytes)")
-        else:
-            print("📎 Keine Datei angehängt")
-        
-        # JSON senden
-        print(f"📤 JSON Payload Größe: {len(json.dumps(payload))} bytes")
-        
+        print(f"📎 Datei: {file_name} ({len(file_content)} bytes) als Base64")
+    
+    # 3. Sende als PURE JSON
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+    
+    print(f"📤 JSON Payload (Auszug): {json.dumps(payload)[:200]}...")
+    
+    try:
         response = requests.post(
             url,
             json=payload,  # WICHTIG: json= statt data=
-            headers={
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            timeout=45
+            headers=headers,
+            timeout=60
         )
         
-        print(f"✅ Response Status: {response.status_code}")
+        print(f"📥 Response Status: {response.status_code}")
+        print(f"📥 Response Headers: {dict(response.headers)}")
         
         if response.status_code != 200:
-            print(f"❌ Response Text: {response.text[:500]}")
-            return response.status_code, f"Fehler: {response.status_code}", None
+            print(f"❌ Fehler: {response.text[:500]}")
+            return response.status_code, f"HTTP {response.status_code}", None
         
         try:
             json_response = response.json()
-            print(f"✅ JSON Response erhalten")
+            print("✅ JSON Response erhalten")
             return response.status_code, "Success", json_response
-        except:
-            print(f"⚠️ Kein JSON: {response.text[:500]}")
-            return response.status_code, "Success (kein JSON)", response.text
+        except json.JSONDecodeError:
+            print(f"⚠️ Kein JSON in Response: {response.text[:500]}")
+            return response.status_code, "No JSON", response.text
             
+    except requests.exceptions.Timeout:
+        print("⏰ Timeout nach 60s")
+        return 408, "Timeout", None
     except Exception as e:
         print(f"💥 Exception: {str(e)}")
-        return 500, f"Fehler: {str(e)}", None
+        return 500, f"Error: {str(e)}", None
     
     # Debug-Info (wird in Streamlit-Logs angezeigt)
     print(f"[DEBUG] Sende an n8n: tenant_id={tenant_id}, uuid={uuid_str}")
