@@ -36,55 +36,53 @@ TENANTS = {
 
 # ===== HILFSFUNKTIONEN =====
 def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
-    """Sendet Datei an n8n Webhook - VERBESSERTE VERSION"""
+    """Sendet Datei an n8n Webhook - JSON VERSION"""
     import requests
+    import base64
     import json
     
-    print(f"\n🔧 Sende an n8n: {url}")
+    print(f"\n🔧 Sende an n8n (JSON): {url}")
     print(f"🔧 Tenant-ID: {tenant_id}")
     print(f"🔧 UUID: {uuid_str}")
-    print(f"🔧 Datei: {file_tuple[0] if file_tuple else 'Keine'}")
     
     try:
-        # 🎯 OPTION 1: Als JSON senden (einfacher)
-        if not file_tuple:
-            # Nur Daten, keine Datei
-            payload = {
-                "tenant_id": tenant_id,
-                "uuid": uuid_str,
-                "data": "business_analysis"
+        # JSON Payload vorbereiten
+        payload = {
+            "tenant_id": tenant_id,
+            "uuid": uuid_str,
+            "metadata": {
+                "source": "streamlit",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             }
+        }
+        
+        # Wenn Datei vorhanden, als Base64 kodieren
+        if file_tuple:
+            file_name, file_content, file_type = file_tuple
+            file_b64 = base64.b64encode(file_content).decode('utf-8')
             
-            print(f"📤 JSON Payload: {json.dumps(payload)}")
-            
-            response = requests.post(
-                url,
-                json=payload,
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
-            
+            payload["file"] = {
+                "filename": file_name,
+                "content_type": file_type,
+                "data": file_b64,
+                "size": len(file_content)
+            }
+            print(f"📎 Datei als Base64: {file_name} ({len(file_content)} bytes)")
         else:
-            # 🎯 OPTION 2: Multipart mit Datei
-            files = {
-                'file': (file_tuple[0], file_tuple[1], file_tuple[2])
-            }
-            
-            # WICHTIG: Form-Data als dictionary, nicht als string
-            data = {
-                'tenant_id': tenant_id,
-                'uuid': uuid_str
-            }
-            
-            print(f"📤 Form-Data: {data}")
-            print(f"📤 Files: {file_tuple[0]} ({len(file_tuple[1])} bytes)")
-            
-            response = requests.post(
-                url,
-                files=files,
-                data=data,
-                timeout=45
-            )
+            print("📎 Keine Datei angehängt")
+        
+        # JSON senden
+        print(f"📤 JSON Payload Größe: {len(json.dumps(payload))} bytes")
+        
+        response = requests.post(
+            url,
+            json=payload,  # WICHTIG: json= statt data=
+            headers={
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            timeout=45
+        )
         
         print(f"✅ Response Status: {response.status_code}")
         
