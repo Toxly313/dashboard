@@ -41,12 +41,67 @@ def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
     if not url or not url.startswith("http"):
         return 400, "Ungültige URL", None
     
-    # 🎯 WICHTIG: Tenant-ID und UUID als Form-Data mitsenden
-    # Das ist der Schlüssel - n8n erwartet diese im formData-Teil des Requests
+    # 🎯 WICHTIG: RICHTIGES Multipart/Form-Data
+    files = {}
+    data = {}
+    
+    if file_tuple:
+        # Datei als Multipart
+        files = {
+            'file': (file_tuple[0], file_tuple[1], file_tuple[2])
+        }
+        print(f"[DEBUG] File prepared: {file_tuple[0]}, size: {len(file_tuple[1])}")
+    
+    # Form-Data Felder (auch ohne Datei wichtig!)
     data = {
         'tenant_id': tenant_id,
         'uuid': uuid_str
     }
+    
+    # Debug-Info
+    print(f"[DEBUG] Sende an n8n: tenant_id={tenant_id}, uuid={uuid_str}")
+    print(f"[DEBUG] Daten: {data}")
+    print(f"[DEBUG] Dateien: {files if files else 'keine'}")
+    
+    try:
+        # 🚀 Korrekter Multipart-Request
+        response = requests.post(
+            url,
+            files=files,  # Dateien
+            data=data,    # Formularfelder
+            timeout=45,
+            headers={
+                'User-Agent': 'Dashboard-KI/1.0',
+                'Accept': 'application/json'
+            }
+        )
+        
+        # Debug-Info
+        print(f"[DEBUG] n8n Response Status: {response.status_code}")
+        print(f"[DEBUG] n8n Response Headers: {response.headers}")
+        if len(response.text) < 500:
+            print(f"[DEBUG] n8n Response Text: {response.text}")
+        
+        if response.status_code != 200:
+            error_msg = f"n8n Fehler {response.status_code}"
+            try:
+                error_detail = response.json().get('error', response.text[:200])
+                error_msg += f": {error_detail}"
+            except:
+                error_msg += f": {response.text[:200]}"
+            return response.status_code, error_msg, None
+        
+        try:
+            return response.status_code, "Success", response.json()
+        except json.JSONDecodeError:
+            return response.status_code, "Kein gültiges JSON", None
+            
+    except requests.exceptions.Timeout:
+        return 408, "Timeout nach 45s", None
+    except requests.exceptions.ConnectionError:
+        return 503, "Verbindungsfehler", None
+    except Exception as e:
+        return 500, f"Fehler: {str(e)}", None
     
     # Debug-Info (wird in Streamlit-Logs angezeigt)
     print(f"[DEBUG] Sende an n8n: tenant_id={tenant_id}, uuid={uuid_str}")
