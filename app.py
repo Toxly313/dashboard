@@ -36,70 +36,51 @@ TENANTS = {
 
 # ===== HILFSFUNKTIONEN =====
 def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
-    """Sendet Datei an n8n Webhook MIT Tenant-ID im Formular."""
+    """Sendet Datei an n8n Webhook als JSON."""
     import requests
+    import base64
+    
     if not url or not url.startswith("http"):
         return 400, "Ungültige URL", None
     
-    # 🎯 WICHTIG: RICHTIGES Multipart/Form-Data
-    files = {}
-    data = {}
-    
-    if file_tuple:
-        # Datei als Multipart
-        files = {
-            'file': (file_tuple[0], file_tuple[1], file_tuple[2])
-        }
-        print(f"[DEBUG] File prepared: {file_tuple[0]}, size: {len(file_tuple[1])}")
-    
-    # Form-Data Felder (auch ohne Datei wichtig!)
-    data = {
+    # JSON Body vorbereiten
+    payload = {
         'tenant_id': tenant_id,
-        'uuid': uuid_str
+        'uuid': uuid_str,
+        'file': None
     }
     
-    # Debug-Info
-    print(f"[DEBUG] Sende an n8n: tenant_id={tenant_id}, uuid={uuid_str}")
-    print(f"[DEBUG] Daten: {data}")
-    print(f"[DEBUG] Dateien: {files if files else 'keine'}")
+    # Datei als Base64 kodieren (falls vorhanden)
+    if file_tuple:
+        file_content = file_tuple[1]
+        file_b64 = base64.b64encode(file_content).decode('utf-8')
+        payload['file'] = {
+            'filename': file_tuple[0],
+            'content_type': file_tuple[2],
+            'data': file_b64,
+            'size': len(file_content)
+        }
+    
+    print(f"[DEBUG] JSON Payload: tenant_id={tenant_id}, uuid={uuid_str}")
     
     try:
-        # 🚀 Korrekter Multipart-Request
         response = requests.post(
             url,
-            files=files,  # Dateien
-            data=data,    # Formularfelder
+            json=payload,  # WICHTIG: json statt data
             timeout=45,
             headers={
-                'User-Agent': 'Dashboard-KI/1.0',
+                'Content-Type': 'application/json',
                 'Accept': 'application/json'
             }
         )
         
-        # Debug-Info
-        print(f"[DEBUG] n8n Response Status: {response.status_code}")
-        print(f"[DEBUG] n8n Response Headers: {response.headers}")
-        if len(response.text) < 500:
-            print(f"[DEBUG] n8n Response Text: {response.text}")
+        print(f"[DEBUG] n8n Response: Status={response.status_code}")
         
         if response.status_code != 200:
-            error_msg = f"n8n Fehler {response.status_code}"
-            try:
-                error_detail = response.json().get('error', response.text[:200])
-                error_msg += f": {error_detail}"
-            except:
-                error_msg += f": {response.text[:200]}"
-            return response.status_code, error_msg, None
+            return response.status_code, f"Fehler: {response.text[:100]}", None
         
-        try:
-            return response.status_code, "Success", response.json()
-        except json.JSONDecodeError:
-            return response.status_code, "Kein gültiges JSON", None
+        return response.status_code, "Success", response.json()
             
-    except requests.exceptions.Timeout:
-        return 408, "Timeout nach 45s", None
-    except requests.exceptions.ConnectionError:
-        return 503, "Verbindungsfehler", None
     except Exception as e:
         return 500, f"Fehler: {str(e)}", None
     
