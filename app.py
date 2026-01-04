@@ -460,6 +460,36 @@ OPTION B: Ein Array mit einem Objekt, das metrics/recommendations enthält:
                 3. ODER: Verwende den oben aktualisierten Streamlit-Code
                 """)
 
+def merge_data(base_dict, new_dict):
+    """Merge zwei Dictionaries."""
+    result = base_dict.copy() if base_dict else {}
+    
+    print(f"DEBUG merge_data: base_dict keys = {list(base_dict.keys()) if base_dict else 'empty'}")
+    print(f"DEBUG merge_data: new_dict keys = {list(new_dict.keys()) if new_dict else 'empty'}")
+    
+    if new_dict:
+        for key, value in new_dict.items():
+            if key not in ['kundenherkunft', 'zahlungsstatus', 'recommendations', 'customer_message']:
+                result[key] = value
+                print(f"DEBUG: Set {key} = {value}")
+        
+        if 'kundenherkunft' in new_dict:
+            if 'kundenherkunft' not in result:
+                result['kundenherkunft'] = {'Online': 0, 'Empfehlung': 0, 'Vorbeikommen': 0}
+            for k, v in new_dict['kundenherkunft'].items():
+                result['kundenherkunft'][k] = result['kundenherkunft'].get(k, 0) + v
+                print(f"DEBUG: Kundenherkunft {k} = {v}")
+        
+        if 'zahlungsstatus' in new_dict:
+            if 'zahlungsstatus' not in result:
+                result['zahlungsstatus'] = {'bezahlt': 0, 'offen': 0, 'überfällig': 0}
+            for k, v in new_dict['zahlungsstatus'].items():
+                result['zahlungsstatus'][k] = result['zahlungsstatus'].get(k, 0) + v
+                print(f"DEBUG: Zahlungsstatus {k} = {v}")
+    
+    print(f"DEBUG merge_data: result keys = {list(result.keys())}")
+    return result
+
 # ===== HAUPTAPP =====
 def main():
     # Session State initialisieren
