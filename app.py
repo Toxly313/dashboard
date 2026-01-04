@@ -274,80 +274,55 @@ def perform_analysis(uploaded_files):
                 st.info("💡 Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
         
-        # ===== DATENVERARBEITUNG =====
+        # ===== NEU: VERBESSERTE DATENVERARBEITUNG =====
         processed_data = None
         
-        # NEU: Prüfe alle möglichen Formate
-        if isinstance(response, dict):
-            # FALL 1: Streamlit-Standardformat (mit metrics/recommendations/customer_message)
-            if all(k in response for k in ['metrics', 'recommendations', 'customer_message']):
-                processed_data = response
-                if st.session_state.debug_mode:
-                    st.info("✅ Streamlit-Standardformat erkannt")
+        # WICHTIG: n8n sendet ein Array ([ {...} ]) - wir brauchen das erste Element
+        if isinstance(response, list) and len(response) > 0:
+            # Nehmen wir das erste Element des Arrays
+            first_item = response[0] if isinstance(response[0], dict) else response
             
-            # FALL 2: Flache Metriken (direkt im Root)
-            elif any(k in response for k in ['belegt', 'frei', 'belegungsgrad']):
+            # Prüfe ob es metrics und recommendations enthält
+            if isinstance(first_item, dict):
+                # JETZT: Die n8n-Daten haben das richtige Format (Array mit Objekt)
+                if 'metrics' in first_item and 'recommendations' in first_item:
+                    # Extrahiere einfache Strings aus recommendations-Objekten
+                    raw_recommendations = first_item.get('recommendations', [])
+                    recommendations = []
+                    
+                    if isinstance(raw_recommendations, list):
+                        for rec in raw_recommendations:
+                            if isinstance(rec, dict):
+                                # Kombiniere action und details für bessere Darstellung
+                                action = rec.get('action', '')
+                                details = rec.get('details', '')
+                                if action and details:
+                                    recommendations.append(f"{action}: {details}")
+                                elif action:
+                                    recommendations.append(action)
+                            elif isinstance(rec, str):
+                                recommendations.append(rec)
+                    
+                    # Nimm summary als customer_message
+                    customer_message = first_item.get('summary', 'Analyse abgeschlossen')
+                    
+                    processed_data = {
+                        'metrics': first_item.get('metrics', {}),
+                        'recommendations': recommendations,
+                        'customer_message': customer_message
+                    }
+                    
+                    if st.session_state.debug_mode:
+                        st.success("✅ n8n-Array-Format erfolgreich verarbeitet!")
+                        
+        # Fallback: Prüfe direktes Objekt (nicht in Array)
+        elif isinstance(response, dict):
+            if 'metrics' in response and 'recommendations' in response:
                 processed_data = {
-                    'metrics': response,
+                    'metrics': response.get('metrics', {}),
                     'recommendations': response.get('recommendations', []),
                     'customer_message': response.get('customer_message', '')
                 }
-                if st.session_state.debug_mode:
-                    st.info("✅ Flache Metriken erkannt")
-            
-            # FALL 3: Doppelt verschachtelt
-            elif 'metrics' in response and isinstance(response['metrics'], dict):
-                if 'metrics' in response['metrics']:
-                    processed_data = {
-                        'metrics': response['metrics'].get('metrics', {}),
-                        'recommendations': response.get('recommendations', []),
-                        'customer_message': response.get('customer_message', '')
-                    }
-                    if st.session_state.debug_mode:
-                        st.info("🔄 Doppelte Verschachtelung erkannt")
-                else:
-                    processed_data = {
-                        'metrics': response['metrics'],
-                        'recommendations': response.get('recommendations', []),
-                        'customer_message': response.get('customer_message', '')
-                    }
-            
-            # FALL 4: n8n-Response-Format (extracted_data/analysis_result)
-            elif 'extracted_data' in response or 'analysis_result' in response:
-                extracted = response.get('extracted_data') or response.get('analysis_result')
-                if isinstance(extracted, dict):
-                    processed_data = {
-                        'metrics': extracted,
-                        'recommendations': [],
-                        'customer_message': f"Daten für {tenant_name} analysiert"
-                    }
-                    if st.session_state.debug_mode:
-                        st.info("✅ n8n-Datenbankformat erkannt")
-        
-        # Wenn noch nicht verarbeitet, versuche JSON aus String zu extrahieren
-        if not processed_data:
-            # Letzter Versuch: Extrahiere JSON aus String
-            json_str = str(response)
-            extracted = extract_json_from_markdown(json_str)
-            if extracted and isinstance(extracted, dict):
-                if st.session_state.debug_mode:
-                    st.info("🔄 JSON aus String extrahiert")
-                
-                # Prüfe welches Format das extrahierte JSON hat
-                if all(k in extracted for k in ['metrics', 'recommendations', 'customer_message']):
-                    processed_data = extracted
-                elif any(k in extracted for k in ['belegt', 'frei', 'belegungsgrad']):
-                    processed_data = {
-                        'metrics': extracted,
-                        'recommendations': extracted.get('recommendations', []),
-                        'customer_message': extracted.get('customer_message', '')
-                    }
-                elif 'metrics' in extracted:
-                    processed_data = {
-                        'metrics': extracted.get('metrics', {}),
-                        'recommendations': extracted.get('recommendations', []),
-                        'customer_message': extracted.get('customer_message', '')
-                    }
         
         # ===== ERGEBNIS VERARBEITEN =====
         if processed_data:
@@ -358,9 +333,6 @@ def perform_analysis(uploaded_files):
             # Tenant-spezifische Nachricht anpassen
             if customer_message:
                 customer_message = customer_message.replace("Kunde", tenant_name)
-            else:
-                # Fallback-Nachricht
-                customer_message = f"KI-Analyse für {tenant_name} abgeschlossen. {len(recommendations)} Empfehlungen verfügbar."
             
             # Fallback-Empfehlungen wenn leer
             if not recommendations:
@@ -370,23 +342,35 @@ def perform_analysis(uploaded_files):
                     "Google Business Profile pflegen und Bewertungen sammeln"
                 ]
             
-            # Fallback-Metriken wenn leer
-            if not metrics_data:
-                metrics_data = {
-                    "belegt": 18,
-                    "frei": 6,
-                    "vertragsdauer_durchschnitt": 7.2,
-                    "reminder_automat": 15,
-                    "social_facebook": 280,
-                    "social_google": 58,
-                    "belegungsgrad": 75,
-                    "kundenherkunft": {"Online": 12, "Empfehlung": 6, "Vorbeikommen": 4},
-                    "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
-                    "neukunden_monat": [5, 4, 7, 6, 8, 9],
-                    "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1}
-                }
-                if st.session_state.debug_mode:
-                    st.info("⚠️ Fallback-Metriken verwendet")
+            # Fallback-Metriken wenn leer ODER alle 0 (leere Excel)
+            all_zeros = True
+            for key in ['belegt', 'frei', 'belegungsgrad']:
+                if metrics_data.get(key, 0) != 0:
+                    all_zeros = False
+                    break
+            
+            if all_zeros or not metrics_data:
+                # Verwende Excel-Daten oder Fallback
+                if excel_merge and any(v != 0 for v in excel_merge.values() if isinstance(v, (int, float))):
+                    metrics_data = excel_merge
+                    if st.session_state.debug_mode:
+                        st.info("⚠️ Excel-Daten verwendet (n8n Metriken waren 0)")
+                else:
+                    metrics_data = {
+                        "belegt": 18,
+                        "frei": 6,
+                        "vertragsdauer_durchschnitt": 7.2,
+                        "reminder_automat": 15,
+                        "social_facebook": 280,
+                        "social_google": 58,
+                        "belegungsgrad": 75,
+                        "kundenherkunft": {"Online": 12, "Empfehlung": 6, "Vorbeikommen": 4},
+                        "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
+                        "neukunden_monat": [5, 4, 7, 6, 8, 9],
+                        "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1}
+                    }
+                    if st.session_state.debug_mode:
+                        st.info("⚠️ Fallback-Metriken verwendet")
             
             # Mit Excel-Daten mergen
             merged_data = merge_data(metrics_data, excel_merge)
@@ -419,14 +403,25 @@ def perform_analysis(uploaded_files):
                 with st.expander("📊 Analyseergebnisse", expanded=True):
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Belegt", metrics_data.get('belegt', 'N/A'))
-                        st.metric("Frei", metrics_data.get('frei', 'N/A'))
+                        st.metric("Belegt", merged_data.get('belegt', 'N/A'))
+                        st.metric("Frei", merged_data.get('frei', 'N/A'))
                     with col2:
-                        st.metric("Belegungsgrad", f"{metrics_data.get('belegungsgrad', 0)}%")
-                        st.metric("Ø Vertragsdauer", f"{metrics_data.get('vertragsdauer_durchschnitt', 0)} Monate")
+                        st.metric("Belegungsgrad", f"{merged_data.get('belegungsgrad', 0)}%")
+                        st.metric("Ø Vertragsdauer", f"{merged_data.get('vertragsdauer_durchschnitt', 0)} Monate")
                     with col3:
-                        st.metric("Zahlungserinnerungen", metrics_data.get('reminder_automat', 'N/A'))
-                        st.metric("Social Media", f"{metrics_data.get('social_facebook', 0)} FB, {metrics_data.get('social_google', 0)} Google")
+                        st.metric("Zahlungserinnerungen", merged_data.get('reminder_automat', 'N/A'))
+                        st.metric("Social Media", f"{merged_data.get('social_facebook', 0)} FB, {merged_data.get('social_google', 0)} Google")
+                    
+                    # Zeige Empfehlungen
+                    if recommendations:
+                        st.subheader("🤖 KI-Empfehlungen")
+                        for i, rec in enumerate(recommendations[:3], 1):
+                            st.markdown(f"**{i}.** {rec}")
+                    
+                    # Zeige Kundennachricht
+                    if customer_message:
+                        st.subheader("📝 Zusammenfassung")
+                        st.info(customer_message)
             
             st.balloons()
             time.sleep(2)
@@ -434,73 +429,35 @@ def perform_analysis(uploaded_files):
         else:
             st.error("❌ n8n-Antwort hat unerwartetes Format")
             
-            # Debug-Info
-            if st.session_state.debug_mode:
-                with st.expander("🔍 Problem-Details", expanded=True):
-                    st.write("**Rohdaten-Typ:**", type(response))
-                    st.write("**Rohdaten-Inhalt:**")
-                    st.code(str(response)[:2000] + "..." if len(str(response)) > 2000 else str(response))
-                    
-                    # Versuche es manuell zu parsen
-                    st.write("**Manuelle Extraktion:**")
-                    try:
-                        # Versuche direkt als JSON
-                        if isinstance(response, str):
-                            parsed = json.loads(response)
-                            st.json(parsed)
-                        else:
-                            st.json(response)
-                    except:
-                        st.write("Konnte nicht als JSON parsen")
-            else:
-                st.info("💡 Aktivieren Sie den Debug-Modus in der Sidebar für mehr Details.")
+            # Zeige genau was falsch ist
+            with st.expander("🔍 Problem-Details", expanded=True):
+                st.write("**n8n sendet dieses Format:**")
+                st.json(response)
                 
-            # Empfehlung für n8n-Konfiguration
-            with st.expander("💡 So beheben Sie das Problem", expanded=True):
-                st.markdown("""
-                **n8n muss dieses Format senden:**
-                ```json
-                {
-                  "metrics": {
-                    "belegt": 142,
-                    "frei": 58,
-                    "vertragsdauer_durchschnitt": 8.5,
-                    "reminder_automat": 67,
-                    "social_facebook": 23,
-                    "social_google": 19,
-                    "belegungsgrad": 71.0,
-                    "kundenherkunft": {
-                      "Online": 45,
-                      "Empfehlung": 32,
-                      "Vorbeikommen": 23
-                    },
-                    "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
-                    "neukunden_monat": [12, 10, 14, 11, 15, 13, 16, 14, 12, 15, 11, 13],
-                    "zahlungsstatus": {
-                      "bezahlt": 128,
-                      "offen": 9,
-                      "überfällig": 5
-                    }
-                  },
-                  "recommendations": [
-                    "Empfehlung 1",
-                    "Empfehlung 2",
-                    "Empfehlung 3"
-                  ],
-                  "customer_message": "Analyse erfolgreich abgeschlossen"
-                }
-                ```
+                st.write("**Streamlit erwartet EINES dieser Formate:**")
+                st.code("""
+OPTION A: Einzelnes Objekt mit metrics/recommendations/customer_message:
+{
+  "metrics": { ... },
+  "recommendations": ["String 1", "String 2"],
+  "customer_message": "Text"
+}
+
+OPTION B: Ein Array mit einem Objekt, das metrics/recommendations enthält:
+[
+  {
+    "metrics": { ... },
+    "recommendations": [{...}, {...}],  // ODER einfache Strings
+    "summary": "Text"
+  }
+]
+                """)
                 
-                **Oder dieses flache Format:**
-                ```json
-                {
-                  "belegt": 142,
-                  "frei": 58,
-                  "belegungsgrad": 71.0,
-                  "recommendations": ["Empfehlung 1", "Empfehlung 2"],
-                  "customer_message": "Analyse erfolgreich"
-                }
-                ```
+                st.warning("""
+                **Lösung:**
+                1. n8n muss ein einzelnes Objekt (nicht Array) senden
+                2. Empfehlungen sollten einfache Strings sein, nicht Objekte
+                3. ODER: Verwende den oben aktualisierten Streamlit-Code
                 """)
 
 # ===== HAUPTAPP =====
