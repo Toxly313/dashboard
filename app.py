@@ -536,27 +536,27 @@ def render_overview():
                 st.info(data["customer_message"])
 
 # In n8n: Function Node vor HTTP Request zu Streamlit
-const metrics = {
-  belegt: 142,
-  frei: 58,
-  vertragsdauer_durchschnitt: 8.5,
-  reminder_automat: 67,
-  social_facebook: 23,
-  social_google: 19,
-  belegungsgrad: 71.0,
-  kundenherkunft: {
-    Online: 45,
-    Empfehlung: 32,
-    Vorbeikommen: 23
-  },
-  neukunden_labels: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
-  neukunden_monat: [12, 10, 14, 11, 15, 13, 16, 14, 12, 15, 11, 13],
-  zahlungsstatus: {
-    bezahlt: 128,
-    offen: 9,
-    überfällig: 5
-  }
-};
+    const metrics = {
+      belegt: 142,
+      frei: 58,
+      vertragsdauer_durchschnitt: 8.5,
+      reminder_automat: 67,
+      social_facebook: 23,
+      social_google: 19,
+      belegungsgrad: 71.0,
+      kundenherkunft: {
+        Online: 45,
+        Empfehlung: 32,
+        Vorbeikommen: 23
+      },
+      neukunden_labels: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
+      neukunden_monat: [12, 10, 14, 11, 15, 13, 16, 14, 12, 15, 11, 13],
+      zahlungsstatus: {
+        bezahlt: 128,
+        offen: 9,
+        überfällig: 5
+      }
+    };
 
 const recommendations = [
   "Belegungsgrad von 71% kann auf 85% optimiert werden",
