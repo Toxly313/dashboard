@@ -665,6 +665,14 @@ def render_login_page():
 
 def render_overview():
     """Hauptseite mit Upload und Analyse."""
+    # Debug: Zeige die aktuellen Session-Daten
+    if st.session_state.debug_mode:
+        st.write("🔍 CURRENT SESSION DATA IN RENDER_OVERVIEW:", st.session_state.data)
+    
+    tenant = st.session_state.current_tenant
+    st.title(f"📊 Dashboard - {tenant['name']}")
+    # ... restlicher Code
+    """Hauptseite mit Upload und Analyse."""
     tenant = st.session_state.current_tenant
     st.title(f"📊 Dashboard - {tenant['name']}")
     
