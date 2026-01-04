@@ -535,56 +535,6 @@ def render_overview():
             with st.expander("📝 Kundennachricht"):
                 st.info(data["customer_message"])
 
-# In n8n: Function Node vor HTTP Request zu Streamlit
-    const metrics = {
-      belegt: 142,
-      frei: 58,
-      vertragsdauer_durchschnitt: 8.5,
-      reminder_automat: 67,
-      social_facebook: 23,
-      social_google: 19,
-      belegungsgrad: 71.0,
-      kundenherkunft: {
-        Online: 45,
-        Empfehlung: 32,
-        Vorbeikommen: 23
-      },
-      neukunden_labels: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
-      neukunden_monat: [12, 10, 14, 11, 15, 13, 16, 14, 12, 15, 11, 13],
-      zahlungsstatus: {
-        bezahlt: 128,
-        offen: 9,
-        überfällig: 5
-      }
-    };
-
-const recommendations = [
-  "Belegungsgrad von 71% kann auf 85% optimiert werden",
-  "Zahlungserinnerungen automatisieren für bessere Zahlungsmoral",
-  "Google-Bewertungen erhöhen für mehr Online-Sichtbarkeit"
-];
-
-const customer_message = "Ihre Lagerauslastung liegt bei 71% mit insgesamt 200 Einheiten. Optimieren Sie die Vermarktung freier Einheiten.";
-
-return [{
-  json: {
-    // Streamlit-Format
-    metrics: metrics,
-    recommendations: recommendations,
-    customer_message: customer_message,
-    
-    // ODER flaches Format (auch unterstützt):
-    // ...metrics,
-    // recommendations: recommendations,
-    // customer_message: customer_message,
-    
-    // Metadaten
-    timestamp: new Date().toISOString(),
-    tenant_id: items[0].json.tenant_id || "kunde_demo_123",
-    status: "success"
-  }
-}];
-
 def render_customers():
     """Kundenseite."""
     st.title("👥 Kundenanalyse")
