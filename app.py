@@ -110,43 +110,6 @@ def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
     except Exception as e:
         print(f"💥 Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
-    
-    # Debug-Info (wird in Streamlit-Logs angezeigt)
-    print(f"[DEBUG] Sende an n8n: tenant_id={tenant_id}, uuid={uuid_str}")
-    
-    try:
-        # 🚀 Multipart-Request: Datei + Formulardaten
-        response = requests.post(
-            url,
-            files={'file': file_tuple} if file_tuple else None,
-            data=data,  # ✅ WICHTIG: tenant_id als Form-Data-Feld
-            timeout=45,
-            headers={'User-Agent': 'Dashboard-KI/1.0'}
-        )
-        
-        # Debug-Info für Response
-        print(f"[DEBUG] n8n Response: Status={response.status_code}")
-        
-        if response.status_code != 200:
-            error_msg = f"n8n Fehler {response.status_code}"
-            try:
-                error_detail = response.json().get('error', response.text[:200])
-                error_msg += f": {error_detail}"
-            except:
-                error_msg += f": {response.text[:200]}"
-            return response.status_code, error_msg, None
-        
-        try:
-            return response.status_code, "Success", response.json()
-        except json.JSONDecodeError:
-            return response.status_code, "Kein gültiges JSON", None
-            
-    except requests.exceptions.Timeout:
-        return 408, "Timeout nach 45s", None
-    except requests.exceptions.ConnectionError:
-        return 503, "Verbindungsfehler", None
-    except Exception as e:
-        return 500, f"Fehler: {str(e)}", None
 
 def extract_json_from_markdown(text):
     """Extrahiert JSON aus Markdown-Text."""
@@ -245,6 +208,300 @@ DEFAULT_DATA = {
     "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1},
     "recommendations": [], "customer_message": ""
 }
+
+# ===== PERFORM ANALYSIS FUNKTION =====
+def perform_analysis(uploaded_files):
+    """Führt die KI-Analyse durch - JETZT MIT TENANT-ID."""
+    with st.spinner("🧠 KI analysiert Daten... (ca. 15-45 Sekunden)"):
+        # Prüfe Tenant-Login
+        if not st.session_state.logged_in or not st.session_state.current_tenant:
+            st.error("❌ Kein Tenant eingeloggt")
+            return
+        
+        tenant_id = st.session_state.current_tenant['tenant_id']
+        tenant_name = st.session_state.current_tenant['name']
+        
+        st.info(f"📤 Sende Daten an n8n mit Tenant-ID: `{tenant_id}`")
+        
+        # Dateien vorbereiten
+        csv_json_files = [f for f in uploaded_files if f.name.lower().endswith((".csv", ".json"))]
+        excel_files = [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]
+        
+        main_file = csv_json_files[0] if csv_json_files else uploaded_files[0]
+        excel_merge = {}
+        
+        # Excel-Daten extrahieren
+        for excel_file in excel_files:
+            try:
+                df = pd.read_excel(excel_file)
+                excel_metrics = extract_metrics_from_excel(df)
+                excel_merge = merge_data(excel_merge, excel_metrics)
+            except Exception as e:
+                st.warning(f"Excel-Fehler: {str(e)[:50]}")
+        
+        # Prüfe n8n URL
+        n8n_url = st.session_state.n8n_url
+        if not n8n_url or not n8n_url.startswith("http"):
+            st.error("❌ Bitte gültige n8n URL in der Sidebar eingeben")
+            return
+        
+        # 🚀 n8n aufrufen MIT TENANT-ID (wichtigste Änderung!)
+        status, message, response = post_to_n8n(
+            n8n_url,
+            (main_file.name, main_file.getvalue(), main_file.type),
+            tenant_id,  # ✅ Tenant-ID wird als Formularfeld gesendet
+            str(uuid.uuid4())
+        )
+        
+        # Debug: Rohantwort speichern
+        st.session_state.last_raw_response = response
+        
+        # Debug-Ausgabe
+        if st.session_state.debug_mode:
+            with st.expander("🔍 Debug: n8n Kommunikation", expanded=True):
+                st.write(f"**Status:** {status}")
+                st.write(f"**Meldung:** {message}")
+                st.write(f"**Tenant-ID:** `{tenant_id}`")
+                st.write(f"**Tenant-Name:** {tenant_name}")
+                st.write(f"**n8n URL:** {n8n_url}")
+                if response:
+                    st.write("**Rohantwort von n8n:**")
+                    st.json(response)
+        
+        if status != 200 or not response:
+            st.error(f"❌ n8n-Fehler: {message}")
+            if status == 400:
+                st.info("💡 Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
+            return
+        
+        # ===== DATENVERARBEITUNG =====
+        processed_data = None
+        
+        # NEU: Prüfe alle möglichen Formate
+        if isinstance(response, dict):
+            # FALL 1: Streamlit-Standardformat (mit metrics/recommendations/customer_message)
+            if all(k in response for k in ['metrics', 'recommendations', 'customer_message']):
+                processed_data = response
+                if st.session_state.debug_mode:
+                    st.info("✅ Streamlit-Standardformat erkannt")
+            
+            # FALL 2: Flache Metriken (direkt im Root)
+            elif any(k in response for k in ['belegt', 'frei', 'belegungsgrad']):
+                processed_data = {
+                    'metrics': response,
+                    'recommendations': response.get('recommendations', []),
+                    'customer_message': response.get('customer_message', '')
+                }
+                if st.session_state.debug_mode:
+                    st.info("✅ Flache Metriken erkannt")
+            
+            # FALL 3: Doppelt verschachtelt
+            elif 'metrics' in response and isinstance(response['metrics'], dict):
+                if 'metrics' in response['metrics']:
+                    processed_data = {
+                        'metrics': response['metrics'].get('metrics', {}),
+                        'recommendations': response.get('recommendations', []),
+                        'customer_message': response.get('customer_message', '')
+                    }
+                    if st.session_state.debug_mode:
+                        st.info("🔄 Doppelte Verschachtelung erkannt")
+                else:
+                    processed_data = {
+                        'metrics': response['metrics'],
+                        'recommendations': response.get('recommendations', []),
+                        'customer_message': response.get('customer_message', '')
+                    }
+            
+            # FALL 4: n8n-Response-Format (extracted_data/analysis_result)
+            elif 'extracted_data' in response or 'analysis_result' in response:
+                extracted = response.get('extracted_data') or response.get('analysis_result')
+                if isinstance(extracted, dict):
+                    processed_data = {
+                        'metrics': extracted,
+                        'recommendations': [],
+                        'customer_message': f"Daten für {tenant_name} analysiert"
+                    }
+                    if st.session_state.debug_mode:
+                        st.info("✅ n8n-Datenbankformat erkannt")
+        
+        # Wenn noch nicht verarbeitet, versuche JSON aus String zu extrahieren
+        if not processed_data:
+            # Letzter Versuch: Extrahiere JSON aus String
+            json_str = str(response)
+            extracted = extract_json_from_markdown(json_str)
+            if extracted and isinstance(extracted, dict):
+                if st.session_state.debug_mode:
+                    st.info("🔄 JSON aus String extrahiert")
+                
+                # Prüfe welches Format das extrahierte JSON hat
+                if all(k in extracted for k in ['metrics', 'recommendations', 'customer_message']):
+                    processed_data = extracted
+                elif any(k in extracted for k in ['belegt', 'frei', 'belegungsgrad']):
+                    processed_data = {
+                        'metrics': extracted,
+                        'recommendations': extracted.get('recommendations', []),
+                        'customer_message': extracted.get('customer_message', '')
+                    }
+                elif 'metrics' in extracted:
+                    processed_data = {
+                        'metrics': extracted.get('metrics', {}),
+                        'recommendations': extracted.get('recommendations', []),
+                        'customer_message': extracted.get('customer_message', '')
+                    }
+        
+        # ===== ERGEBNIS VERARBEITEN =====
+        if processed_data:
+            metrics_data = processed_data.get('metrics', {})
+            recommendations = processed_data.get('recommendations', [])
+            customer_message = processed_data.get('customer_message', '')
+            
+            # Tenant-spezifische Nachricht anpassen
+            if customer_message:
+                customer_message = customer_message.replace("Kunde", tenant_name)
+            else:
+                # Fallback-Nachricht
+                customer_message = f"KI-Analyse für {tenant_name} abgeschlossen. {len(recommendations)} Empfehlungen verfügbar."
+            
+            # Fallback-Empfehlungen wenn leer
+            if not recommendations:
+                recommendations = [
+                    f"Optimieren Sie Ihre Lagerauslastung für {tenant_name}",
+                    "Automatische Zahlungserinnerungen einrichten",
+                    "Google Business Profile pflegen und Bewertungen sammeln"
+                ]
+            
+            # Fallback-Metriken wenn leer
+            if not metrics_data:
+                metrics_data = {
+                    "belegt": 18,
+                    "frei": 6,
+                    "vertragsdauer_durchschnitt": 7.2,
+                    "reminder_automat": 15,
+                    "social_facebook": 280,
+                    "social_google": 58,
+                    "belegungsgrad": 75,
+                    "kundenherkunft": {"Online": 12, "Empfehlung": 6, "Vorbeikommen": 4},
+                    "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
+                    "neukunden_monat": [5, 4, 7, 6, 8, 9],
+                    "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1}
+                }
+                if st.session_state.debug_mode:
+                    st.info("⚠️ Fallback-Metriken verwendet")
+            
+            # Mit Excel-Daten mergen
+            merged_data = merge_data(metrics_data, excel_merge)
+            merged_data['recommendations'] = recommendations
+            merged_data['customer_message'] = customer_message
+            merged_data['tenant_id'] = tenant_id  # Tenant-ID in den Daten speichern
+            
+            # Session State aktualisieren
+            st.session_state.prev = st.session_state.data.copy()
+            st.session_state.data = merged_data
+            
+            # History speichern (tenant-spezifisch)
+            st.session_state.history.append({
+                "ts": datetime.now().isoformat(),
+                "data": merged_data.copy(),
+                "files": [f.name for f in uploaded_files],
+                "tenant_id": tenant_id,
+                "tenant_name": tenant_name,
+                "source": "n8n"
+            })
+            
+            # Analyses-Usage erhöhen (Demo - später Datenbank)
+            if 'analyses_used' in st.session_state.current_tenant:
+                st.session_state.current_tenant['analyses_used'] += 1
+            
+            st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}! ({len(recommendations)} Empfehlungen)")
+            
+            # Zeige kurz die wichtigsten Metriken
+            if metrics_data:
+                with st.expander("📊 Analyseergebnisse", expanded=True):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Belegt", metrics_data.get('belegt', 'N/A'))
+                        st.metric("Frei", metrics_data.get('frei', 'N/A'))
+                    with col2:
+                        st.metric("Belegungsgrad", f"{metrics_data.get('belegungsgrad', 0)}%")
+                        st.metric("Ø Vertragsdauer", f"{metrics_data.get('vertragsdauer_durchschnitt', 0)} Monate")
+                    with col3:
+                        st.metric("Zahlungserinnerungen", metrics_data.get('reminder_automat', 'N/A'))
+                        st.metric("Social Media", f"{metrics_data.get('social_facebook', 0)} FB, {metrics_data.get('social_google', 0)} Google")
+            
+            st.balloons()
+            time.sleep(2)
+            st.rerun()
+        else:
+            st.error("❌ n8n-Antwort hat unerwartetes Format")
+            
+            # Debug-Info
+            if st.session_state.debug_mode:
+                with st.expander("🔍 Problem-Details", expanded=True):
+                    st.write("**Rohdaten-Typ:**", type(response))
+                    st.write("**Rohdaten-Inhalt:**")
+                    st.code(str(response)[:2000] + "..." if len(str(response)) > 2000 else str(response))
+                    
+                    # Versuche es manuell zu parsen
+                    st.write("**Manuelle Extraktion:**")
+                    try:
+                        # Versuche direkt als JSON
+                        if isinstance(response, str):
+                            parsed = json.loads(response)
+                            st.json(parsed)
+                        else:
+                            st.json(response)
+                    except:
+                        st.write("Konnte nicht als JSON parsen")
+            else:
+                st.info("💡 Aktivieren Sie den Debug-Modus in der Sidebar für mehr Details.")
+                
+            # Empfehlung für n8n-Konfiguration
+            with st.expander("💡 So beheben Sie das Problem", expanded=True):
+                st.markdown("""
+                **n8n muss dieses Format senden:**
+                ```json
+                {
+                  "metrics": {
+                    "belegt": 142,
+                    "frei": 58,
+                    "vertragsdauer_durchschnitt": 8.5,
+                    "reminder_automat": 67,
+                    "social_facebook": 23,
+                    "social_google": 19,
+                    "belegungsgrad": 71.0,
+                    "kundenherkunft": {
+                      "Online": 45,
+                      "Empfehlung": 32,
+                      "Vorbeikommen": 23
+                    },
+                    "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
+                    "neukunden_monat": [12, 10, 14, 11, 15, 13, 16, 14, 12, 15, 11, 13],
+                    "zahlungsstatus": {
+                      "bezahlt": 128,
+                      "offen": 9,
+                      "überfällig": 5
+                    }
+                  },
+                  "recommendations": [
+                    "Empfehlung 1",
+                    "Empfehlung 2",
+                    "Empfehlung 3"
+                  ],
+                  "customer_message": "Analyse erfolgreich abgeschlossen"
+                }
+                ```
+                
+                **Oder dieses flache Format:**
+                ```json
+                {
+                  "belegt": 142,
+                  "frei": 58,
+                  "belegungsgrad": 71.0,
+                  "recommendations": ["Empfehlung 1", "Empfehlung 2"],
+                  "customer_message": "Analyse erfolgreich"
+                }
+                ```
+                """)
 
 # ===== HAUPTAPP =====
 def main():
