@@ -535,161 +535,55 @@ def render_overview():
             with st.expander("📝 Kundennachricht"):
                 st.info(data["customer_message"])
 
-def perform_analysis(uploaded_files):
-    """Führt die KI-Analyse durch - JETZT MIT TENANT-ID."""
-    with st.spinner("🧠 KI analysiert Daten... (ca. 15-45 Sekunden)"):
-        # Prüfe Tenant-Login
-        if not st.session_state.logged_in or not st.session_state.current_tenant:
-            st.error("❌ Kein Tenant eingeloggt")
-            return
-        
-        tenant_id = st.session_state.current_tenant['tenant_id']
-        tenant_name = st.session_state.current_tenant['name']
-        
-        st.info(f"📤 Sende Daten an n8n mit Tenant-ID: `{tenant_id}`")
-        
-        # Dateien vorbereiten
-        csv_json_files = [f for f in uploaded_files if f.name.lower().endswith((".csv", ".json"))]
-        excel_files = [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]
-        
-        main_file = csv_json_files[0] if csv_json_files else uploaded_files[0]
-        excel_merge = {}
-        
-        # Excel-Daten extrahieren
-        for excel_file in excel_files:
-            try:
-                df = pd.read_excel(excel_file)
-                excel_metrics = extract_metrics_from_excel(df)
-                excel_merge = merge_data(excel_merge, excel_metrics)
-            except Exception as e:
-                st.warning(f"Excel-Fehler: {str(e)[:50]}")
-        
-        # Prüfe n8n URL
-        n8n_url = st.session_state.n8n_url
-        if not n8n_url or not n8n_url.startswith("http"):
-            st.error("❌ Bitte gültige n8n URL in der Sidebar eingeben")
-            return
-        
-        # 🚀 n8n aufrufen MIT TENANT-ID (wichtigste Änderung!)
-        status, message, response = post_to_n8n(
-            n8n_url,
-            (main_file.name, main_file.getvalue(), main_file.type),
-            tenant_id,  # ✅ Tenant-ID wird als Formularfeld gesendet
-            str(uuid.uuid4())
-        )
-        
-        # Debug: Rohantwort speichern
-        st.session_state.last_raw_response = response
-        
-        # Debug-Ausgabe
-        if st.session_state.debug_mode:
-            with st.expander("🔍 Debug: n8n Kommunikation", expanded=True):
-                st.write(f"**Status:** {status}")
-                st.write(f"**Meldung:** {message}")
-                st.write(f"**Tenant-ID:** `{tenant_id}`")
-                st.write(f"**Tenant-Name:** {tenant_name}")
-                st.write(f"**n8n URL:** {n8n_url}")
-                if response:
-                    st.write("**Rohantwort von n8n:**")
-                    st.json(response)
-        
-        if status != 200 or not response:
-            st.error(f"❌ n8n-Fehler: {message}")
-            if status == 400:
-                st.info("💡 Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
-            return
-        
-        # ===== DATENVERARBEITUNG =====
-        processed_data = None
-        
-        if isinstance(response, dict):
-            # FALL A: Doppelt verschachtelt
-            if 'metrics' in response and isinstance(response['metrics'], dict):
-                if 'metrics' in response['metrics']:
-                    processed_data = {
-                        'metrics': response['metrics'].get('metrics', {}),
-                        'recommendations': response.get('recommendations', []),
-                        'customer_message': response.get('customer_message', '')
-                    }
-                    if st.session_state.debug_mode:
-                        st.info("🔄 Doppelte Verschachtelung erkannt und korrigiert")
-                else:
-                    processed_data = {
-                        'metrics': response['metrics'],
-                        'recommendations': response.get('recommendations', []),
-                        'customer_message': response.get('customer_message', '')
-                    }
-            
-            # FALL B: Flaches Format
-            elif all(k in response for k in ['metrics', 'recommendations', 'customer_message']):
-                processed_data = response
-            
-            # FALL C: Direkte Metriken
-            elif any(k in response for k in ['belegt', 'belegungsgrad']):
-                processed_data = {
-                    'metrics': response,
-                    'recommendations': response.get('recommendations', []),
-                    'customer_message': response.get('customer_message', '')
-                }
-        
-        if not processed_data:
-            # Letzter Versuch: Extrahiere JSON aus String
-            json_str = str(response)
-            extracted = extract_json_from_markdown(json_str)
-            if extracted and isinstance(extracted, dict):
-                if 'metrics' in extracted:
-                    processed_data = {
-                        'metrics': extracted.get('metrics', {}),
-                        'recommendations': extracted.get('recommendations', []),
-                        'customer_message': extracted.get('customer_message', '')
-                    }
-        
-        # ===== ERGEBNIS VERARBEITEN =====
-        if processed_data:
-            metrics_data = processed_data.get('metrics', {})
-            recommendations = processed_data.get('recommendations', [])
-            customer_message = processed_data.get('customer_message', '')
-            
-            # Tenant-spezifische Nachricht
-            if customer_message and "Kunde" in customer_message:
-                customer_message = customer_message.replace("Kunde", tenant_name)
-            
-            # Mit Excel-Daten mergen
-            merged_data = merge_data(metrics_data, excel_merge)
-            merged_data['recommendations'] = recommendations
-            merged_data['customer_message'] = customer_message
-            merged_data['tenant_id'] = tenant_id  # Tenant-ID in den Daten speichern
-            
-            # Session State aktualisieren
-            st.session_state.prev = st.session_state.data.copy()
-            st.session_state.data = merged_data
-            
-            # History speichern (tenant-spezifisch)
-            st.session_state.history.append({
-                "ts": datetime.now().isoformat(),
-                "data": merged_data.copy(),
-                "files": [f.name for f in uploaded_files],
-                "tenant_id": tenant_id,
-                "tenant_name": tenant_name,
-                "source": "n8n"
-            })
-            
-            # Analyses-Usage erhöhen (Demo - später Datenbank)
-            if 'analyses_used' in st.session_state.current_tenant:
-                st.session_state.current_tenant['analyses_used'] += 1
-            
-            st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}! ({len(recommendations)} Empfehlungen)")
-            st.balloons()
-            time.sleep(1)
-            st.rerun()
-        else:
-            st.error("❌ n8n-Antwort hat unerwartetes Format")
-            if st.session_state.debug_mode:
-                with st.expander("🔍 Problem-Details"):
-                    st.write("Rohdaten-Typ:", type(response))
-                    st.write("Rohdaten:", response)
-            else:
-                st.info("💡 Aktivieren Sie den Debug-Modus für mehr Details.")
+// In n8n: Function Node vor HTTP Request zu Streamlit
+const metrics = {
+  belegt: 142,
+  frei: 58,
+  vertragsdauer_durchschnitt: 8.5,
+  reminder_automat: 67,
+  social_facebook: 23,
+  social_google: 19,
+  belegungsgrad: 71.0,
+  kundenherkunft: {
+    Online: 45,
+    Empfehlung: 32,
+    Vorbeikommen: 23
+  },
+  neukunden_labels: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
+  neukunden_monat: [12, 10, 14, 11, 15, 13, 16, 14, 12, 15, 11, 13],
+  zahlungsstatus: {
+    bezahlt: 128,
+    offen: 9,
+    überfällig: 5
+  }
+};
+
+const recommendations = [
+  "Belegungsgrad von 71% kann auf 85% optimiert werden",
+  "Zahlungserinnerungen automatisieren für bessere Zahlungsmoral",
+  "Google-Bewertungen erhöhen für mehr Online-Sichtbarkeit"
+];
+
+const customer_message = "Ihre Lagerauslastung liegt bei 71% mit insgesamt 200 Einheiten. Optimieren Sie die Vermarktung freier Einheiten.";
+
+return [{
+  json: {
+    // Streamlit-Format
+    metrics: metrics,
+    recommendations: recommendations,
+    customer_message: customer_message,
+    
+    // ODER flaches Format (auch unterstützt):
+    // ...metrics,
+    // recommendations: recommendations,
+    // customer_message: customer_message,
+    
+    // Metadaten
+    timestamp: new Date().toISOString(),
+    tenant_id: items[0].json.tenant_id || "kunde_demo_123",
+    status: "success"
+  }
+}];
 
 def render_customers():
     """Kundenseite."""
