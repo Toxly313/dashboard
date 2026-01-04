@@ -535,7 +535,7 @@ def render_overview():
             with st.expander("📝 Kundennachricht"):
                 st.info(data["customer_message"])
 
-// In n8n: Function Node vor HTTP Request zu Streamlit
+# In n8n: Function Node vor HTTP Request zu Streamlit
 const metrics = {
   belegt: 142,
   frei: 58,
