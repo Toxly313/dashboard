@@ -59,11 +59,12 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
     payload = {
         "tenant_id": tenant_id,
         "uuid": uuid_str,
-        "action": "get_last",  # WICHTIG: Andere Action!
+        "action": "analyze",  # WICHTIG: Immer "analyze" senden!
         "metadata": {
             "source": "streamlit",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "purpose": "load_last_analysis"
+            "purpose": "load_last_analysis",  # Hier unterscheiden wir
+            "mode": "get_last"  # NEU: Modus-Flag hinzufügen
         }
     }
     
