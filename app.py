@@ -364,7 +364,7 @@ def perform_analysis(uploaded_files):
             except Exception as e:
                 st.warning(f"Excel-Fehler: {str(e)[:50]}")
         
-        # 3. n8n aufrufen (ANALYZE Action)
+        # 3. n8n aufrufen (ANALYZE Action) MIT Modus-Flag
         n8n_url = st.session_state.n8n_url
         if not n8n_url:
             st.error("❌ Bitte n8n URL in der Sidebar eingeben")
@@ -375,8 +375,10 @@ def perform_analysis(uploaded_files):
             n8n_url,
             (main_file.name, main_file.getvalue(), main_file.type),
             tenant_id,
-            str(uuid.uuid4())
+            str(uuid.uuid4()),
+            mode="new_analysis"  # NEU: Modus-Parameter
         )
+        # ... Rest bleibt
         
         # Debug
         if st.session_state.debug_mode:
