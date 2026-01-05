@@ -1,7 +1,13 @@
 import os, uuid, json, re, time
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
+import numpy as np
 import streamlit as st
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import requests
+import base64
 
 # ===== PORT FIX FÜR RAILWAY =====
 if 'PORT' in os.environ:
@@ -16,7 +22,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ===== TENANT-KONFIGURATION (Später durch Datenbank ersetzen) =====
+# ===== TENANT-KONFIGURATION =====
 TENANTS = {
     "demo@kunde.de": {
         "tenant_id": "kunde_demo_123",
@@ -34,106 +40,120 @@ TENANTS = {
     }
 }
 
+# ===== DEFAULT DATEN =====
+DEFAULT_DATA = {
+    "belegt": 18, "frei": 6, "vertragsdauer_durchschnitt": 7.2, "reminder_automat": 15,
+    "social_facebook": 280, "social_google": 58, "belegungsgrad": 75,
+    "kundenherkunft": {"Online": 12, "Empfehlung": 6, "Vorbeikommen": 4},
+    "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
+    "neukunden_monat": [5, 4, 7, 6, 8, 9],
+    "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1},
+    "recommendations": [], "customer_message": ""
+}
+
 # ===== HILFSFUNKTIONEN =====
-def post_to_n8n(url, file_tuple, tenant_id, uuid_str):
-    """Sendet Daten an n8n - REINE JSON VERSION"""
-    import requests
-    import json
-    import base64
+def post_to_n8n_get_last(url, tenant_id, uuid_str):
+    """Sendet GET-LAST Request an n8n (OHNE Datei) - für Login."""
+    print(f"\n🔍 GET-LAST Request für Tenant: {tenant_id}")
     
-    print(f"\n🚀 Sende REINES JSON an n8n")
-    print(f"URL: {url}")
-    print(f"Tenant-ID: {tenant_id}")
-    print(f"UUID: {uuid_str}")
-    
-    # 1. Erstelle JSON Payload
     payload = {
         "tenant_id": tenant_id,
         "uuid": uuid_str,
+        "action": "get_last",  # WICHTIG: Andere Action!
         "metadata": {
             "source": "streamlit",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "customer_email": "demo@kunde.de"  # Beispiel
+            "purpose": "load_last_analysis"
         }
     }
     
-    # 2. Datei als Base64 hinzufügen (falls vorhanden)
-    if file_tuple:
-        file_name, file_content, file_type = file_tuple
-        
-        # Kodiere als Base64
-        file_b64 = base64.b64encode(file_content).decode('utf-8')
-        
-        payload["file"] = {
-            "filename": file_name,
-            "content_type": file_type,
-            "data": file_b64,  # Base64 encoded
-            "size": len(file_content)
-        }
-        
-        print(f"📎 Datei: {file_name} ({len(file_content)} bytes) als Base64")
-    
-    # 3. Sende als PURE JSON
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
-    
-    print(f"📤 JSON Payload (Auszug): {json.dumps(payload)[:200]}...")
+    headers = {'Content-Type': 'application/json'}
     
     try:
         response = requests.post(
             url,
-            json=payload,  # WICHTIG: json= statt data=
+            json=payload,
             headers=headers,
-            timeout=60
+            timeout=30  # Kürzeres Timeout für get_last
         )
         
-        print(f"📥 Response Status: {response.status_code}")
-        print(f"📥 Response Headers: {dict(response.headers)}")
+        print(f"📥 GET-LAST Response Status: {response.status_code}")
         
         if response.status_code != 200:
-            print(f"❌ Fehler: {response.text[:500]}")
             return response.status_code, f"HTTP {response.status_code}", None
         
         try:
             json_response = response.json()
-            print("✅ JSON Response erhalten")
+            print(f"✅ GET-LAST JSON erhalten")
             return response.status_code, "Success", json_response
         except json.JSONDecodeError:
-            print(f"⚠️ Kein JSON in Response: {response.text[:500]}")
+            print(f"⚠️ Kein JSON in GET-LAST Response: {response.text[:200]}")
             return response.status_code, "No JSON", response.text
             
     except requests.exceptions.Timeout:
-        print("⏰ Timeout nach 60s")
+        print("⏰ GET-LAST Timeout nach 30s")
         return 408, "Timeout", None
     except Exception as e:
-        print(f"💥 Exception: {str(e)}")
+        print(f"💥 GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
 
-def extract_json_from_markdown(text):
-    """Extrahiert JSON aus Markdown-Text."""
-    if not text or not isinstance(text, str):
-        return None
+def post_to_n8n_analyze(url, file_tuple, tenant_id, uuid_str):
+    """Sendet ANALYZE Request an n8n (MIT Datei) - für neue Analyse."""
+    print(f"\n🚀 ANALYZE Request für Tenant: {tenant_id}")
     
-    pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
-    matches = re.findall(pattern, text, re.DOTALL)
+    payload = {
+        "tenant_id": tenant_id,
+        "uuid": uuid_str,
+        "action": "analyze",  # WICHTIG: Andere Action!
+        "metadata": {
+            "source": "streamlit",
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "purpose": "new_analysis"
+        }
+    }
     
-    if matches:
-        try:
-            return json.loads(matches[0])
-        except:
-            pass
+    # Datei hinzufügen
+    if file_tuple:
+        file_name, file_content, file_type = file_tuple
+        file_b64 = base64.b64encode(file_content).decode('utf-8')
+        payload["file"] = {
+            "filename": file_name,
+            "content_type": file_type,
+            "data": file_b64,
+            "size": len(file_content)
+        }
+        print(f"📎 Datei: {file_name} ({len(file_content)} bytes) als Base64")
+    
+    headers = {'Content-Type': 'application/json'}
     
     try:
-        start = text.find('{')
-        end = text.rfind('}') + 1
-        if start != -1 and end > start:
-            return json.loads(text[start:end])
-    except:
-        pass
-    
-    return None
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=60
+        )
+        
+        print(f"📥 ANALYZE Response Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"❌ ANALYZE Fehler: {response.text[:200]}")
+            return response.status_code, f"HTTP {response.status_code}", None
+        
+        try:
+            json_response = response.json()
+            print("✅ ANALYZE JSON erhalten")
+            return response.status_code, "Success", json_response
+        except json.JSONDecodeError:
+            print(f"⚠️ Kein JSON in ANALYZE Response: {response.text[:200]}")
+            return response.status_code, "No JSON", response.text
+            
+    except requests.exceptions.Timeout:
+        print("⏰ ANALYZE Timeout nach 60s")
+        return 408, "Timeout", None
+    except Exception as e:
+        print(f"💥 ANALYZE Exception: {str(e)}")
+        return 500, f"Error: {str(e)}", None
 
 def extract_metrics_from_excel(df):
     """Extrahiert Metriken aus Excel-Daten."""
@@ -179,6 +199,7 @@ def extract_metrics_from_excel(df):
 def merge_data(base_dict, new_dict):
     """Merge zwei Dictionaries."""
     result = base_dict.copy() if base_dict else {}
+    
     if new_dict:
         for key, value in new_dict.items():
             if key not in ['kundenherkunft', 'zahlungsstatus', 'recommendations', 'customer_message']:
@@ -198,40 +219,143 @@ def merge_data(base_dict, new_dict):
     
     return result
 
-# ===== DEFAULT DATEN =====
-DEFAULT_DATA = {
-    "belegt": 18, "frei": 6, "vertragsdauer_durchschnitt": 7.2, "reminder_automat": 15,
-    "social_facebook": 280, "social_google": 58, "belegungsgrad": 75,
-    "kundenherkunft": {"Online": 12, "Empfehlung": 6, "Vorbeikommen": 4},
-    "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
-    "neukunden_monat": [5, 4, 7, 6, 8, 9],
-    "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1},
-    "recommendations": [], "customer_message": ""
-}
+def create_comparison_chart(before_data, after_data, metric_key, title):
+    """Erstellt Vergleichsdiagramm für eine Metrik."""
+    if metric_key not in before_data or metric_key not in after_data:
+        return None
+    
+    before_val = before_data[metric_key]
+    after_val = after_data[metric_key]
+    
+    fig = go.Figure(data=[
+        go.Bar(name='Vorher', x=['Vorher'], y=[before_val], marker_color='lightblue'),
+        go.Bar(name='Nachher', x=['Nachher'], y=[after_val], marker_color='lightgreen')
+    ])
+    
+    delta = after_val - before_val
+    delta_color = 'green' if delta >= 0 else 'red'
+    delta_symbol = '+' if delta >= 0 else ''
+    
+    fig.update_layout(
+        title=f"{title}<br><span style='font-size:12px;color:{delta_color}'>{delta_symbol}{delta:.1f} Veränderung</span>",
+        height=300,
+        showlegend=True,
+        yaxis_title=title
+    )
+    
+    return fig
 
-# ===== PERFORM ANALYSIS FUNKTION =====
+def create_timeseries_chart(history_data, metric_key, title):
+    """Erstellt Zeitreihendiagramm aus History-Daten."""
+    if not history_data or len(history_data) < 2:
+        return None
+    
+    dates = []
+    values = []
+    
+    for entry in sorted(history_data, key=lambda x: x.get('ts', '')):
+        if isinstance(entry, dict) and 'data' in entry and metric_key in entry['data']:
+            dates.append(entry.get('ts', ''))
+            values.append(entry['data'][metric_key])
+    
+    if len(dates) < 2:
+        return None
+    
+    fig = go.Figure(data=[
+        go.Scatter(x=dates, y=values, mode='lines+markers', name=title)
+    ])
+    
+    fig.update_layout(
+        title=f"Entwicklung: {title}",
+        height=300,
+        xaxis_title="Datum",
+        yaxis_title=title
+    )
+    
+    return fig
+
+def load_last_analysis():
+    """Lädt die letzte Analyse für den eingeloggten Tenant (BEIM LOGIN)."""
+    if not st.session_state.logged_in:
+        return False
+    
+    tenant_id = st.session_state.current_tenant['tenant_id']
+    n8n_url = st.session_state.n8n_url
+    
+    if not n8n_url:
+        st.warning("⚠️ n8n URL nicht gesetzt. Verwende Standarddaten.")
+        st.session_state.current_data = DEFAULT_DATA.copy()
+        st.session_state.before_analysis = DEFAULT_DATA.copy()
+        return True
+    
+    with st.spinner("📊 Lade letzte Analyse..."):
+        # GET-LAST an n8n senden
+        status, message, response = post_to_n8n_get_last(
+            n8n_url,
+            tenant_id,
+            str(uuid.uuid4())
+        )
+        
+        if status == 200 and response:
+            if response.get('current_analysis'):
+                # Letzte Analyse gefunden
+                current_analysis = response['current_analysis']
+                
+                # Sicherstellen, dass alle benötigten Felder vorhanden sind
+                if 'metrics' in current_analysis:
+                    metrics_data = current_analysis['metrics']
+                else:
+                    metrics_data = current_analysis
+                
+                # Empfehlungen und Nachricht
+                recommendations = current_analysis.get('recommendations', [])
+                customer_message = current_analysis.get('customer_message', 'Letzte Analyse')
+                
+                # Vollständige Datenstruktur erstellen
+                loaded_data = {
+                    **metrics_data,
+                    'recommendations': recommendations,
+                    'customer_message': customer_message,
+                    'analysis_date': current_analysis.get('analysis_date', datetime.now().isoformat()),
+                    'tenant_id': tenant_id
+                }
+                
+                # In Session State speichern
+                st.session_state.current_data = loaded_data
+                st.session_state.before_analysis = loaded_data.copy()
+                st.session_state.last_analysis_loaded = True
+                
+                print(f"✅ Letzte Analyse geladen für Tenant: {tenant_id}")
+                return True
+            else:
+                # Keine vorherige Analyse gefunden
+                st.session_state.current_data = DEFAULT_DATA.copy()
+                st.session_state.before_analysis = DEFAULT_DATA.copy()
+                st.info("ℹ️ Keine vorherige Analyse gefunden. Verwende Standarddaten.")
+                return True
+        else:
+            st.error(f"❌ Fehler beim Laden: {message}")
+            # Fallback: Default-Daten
+            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.before_analysis = DEFAULT_DATA.copy()
+            return False
+
 def perform_analysis(uploaded_files):
-    """Führt die KI-Analyse durch - JETZT MIT TENANT-ID."""
+    """Führt die KI-Analyse durch und speichert Vergleich."""
     with st.spinner("🧠 KI analysiert Daten... (ca. 15-45 Sekunden)"):
-        # Prüfe Tenant-Login
-        if not st.session_state.logged_in or not st.session_state.current_tenant:
+        if not st.session_state.logged_in:
             st.error("❌ Kein Tenant eingeloggt")
             return
         
         tenant_id = st.session_state.current_tenant['tenant_id']
         tenant_name = st.session_state.current_tenant['name']
         
-        st.info(f"📤 Sende Daten an n8n mit Tenant-ID: `{tenant_id}`")
+        # 1. Vorherige Daten als Vergleich speichern
+        st.session_state.before_analysis = st.session_state.current_data.copy()
         
-        # Dateien vorbereiten
-        csv_json_files = [f for f in uploaded_files if f.name.lower().endswith((".csv", ".json"))]
-        excel_files = [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]
-        
-        main_file = csv_json_files[0] if csv_json_files else uploaded_files[0]
+        # 2. Excel-Daten extrahieren (falls vorhanden)
         excel_merge = {}
-        
-        # Excel-Daten extrahieren
-        for excel_file in excel_files:
+        for excel_file in [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]:
             try:
                 df = pd.read_excel(excel_file)
                 excel_metrics = extract_metrics_from_excel(df)
@@ -239,31 +363,27 @@ def perform_analysis(uploaded_files):
             except Exception as e:
                 st.warning(f"Excel-Fehler: {str(e)[:50]}")
         
-        # Prüfe n8n URL
+        # 3. n8n aufrufen (ANALYZE Action)
         n8n_url = st.session_state.n8n_url
-        if not n8n_url or not n8n_url.startswith("http"):
-            st.error("❌ Bitte gültige n8n URL in der Sidebar eingeben")
+        if not n8n_url:
+            st.error("❌ Bitte n8n URL in der Sidebar eingeben")
             return
         
-        # 🚀 n8n aufrufen MIT TENANT-ID (wichtigste Änderung!)
-        status, message, response = post_to_n8n(
+        main_file = uploaded_files[0]
+        status, message, response = post_to_n8n_analyze(
             n8n_url,
             (main_file.name, main_file.getvalue(), main_file.type),
-            tenant_id,  # ✅ Tenant-ID wird als Formularfeld gesendet
+            tenant_id,
             str(uuid.uuid4())
         )
         
-        # Debug: Rohantwort speichern
-        st.session_state.last_raw_response = response
-        
-        # Debug-Ausgabe
+        # Debug
         if st.session_state.debug_mode:
             with st.expander("🔍 Debug: n8n Kommunikation", expanded=True):
                 st.write(f"**Status:** {status}")
                 st.write(f"**Meldung:** {message}")
                 st.write(f"**Tenant-ID:** `{tenant_id}`")
                 st.write(f"**Tenant-Name:** {tenant_name}")
-                st.write(f"**n8n URL:** {n8n_url}")
                 if response:
                     st.write("**Rohantwort von n8n:**")
                     st.json(response)
@@ -274,154 +394,96 @@ def perform_analysis(uploaded_files):
                 st.info("💡 Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
         
-        # ===== NEU: VERBESSERTE DATENVERARBEITUNG =====
+        # 4. Antwort verarbeiten
         processed_data = None
         
-        # WICHTIG: n8n sendet ein Array ([ {...} ]) - wir brauchen das erste Element
-        if isinstance(response, list) and len(response) > 0:
-            # Nehmen wir das erste Element des Arrays
-            first_item = response[0] if isinstance(response[0], dict) else response
+        # Prüfe ob response current_analysis enthält (neues Format)
+        if isinstance(response, dict) and 'current_analysis' in response:
+            current_analysis = response['current_analysis']
+            previous_analysis = response.get('previous_analysis')
             
-            # Prüfe ob es metrics und recommendations enthält
+            if 'metrics' in current_analysis:
+                metrics_data = current_analysis['metrics']
+            else:
+                metrics_data = current_analysis
+            
+            recommendations = current_analysis.get('recommendations', [])
+            customer_message = current_analysis.get('customer_message', 'Analyse abgeschlossen')
+            
+            processed_data = {
+                'metrics': metrics_data,
+                'recommendations': recommendations,
+                'customer_message': customer_message,
+                'previous_analysis': previous_analysis
+            }
+            
+            if st.session_state.debug_mode:
+                st.success("✅ n8n-Format mit current_analysis erkannt!")
+        
+        # Fallback: Altes Format
+        elif isinstance(response, list) and len(response) > 0:
+            first_item = response[0]
             if isinstance(first_item, dict):
-                # JETZT: Die n8n-Daten haben das richtige Format (Array mit Objekt)
-                if 'metrics' in first_item and 'recommendations' in first_item:
-                    # Extrahiere einfache Strings aus recommendations-Objekten
-                    raw_recommendations = first_item.get('recommendations', [])
-                    recommendations = []
-                    
-                    if isinstance(raw_recommendations, list):
-                        for rec in raw_recommendations:
-                            if isinstance(rec, dict):
-                                # Kombiniere action und details für bessere Darstellung
-                                action = rec.get('action', '')
-                                details = rec.get('details', '')
-                                if action and details:
-                                    recommendations.append(f"{action}: {details}")
-                                elif action:
-                                    recommendations.append(action)
-                            elif isinstance(rec, str):
-                                recommendations.append(rec)
-                    
-                    # Nimm summary als customer_message
-                    customer_message = first_item.get('summary', 'Analyse abgeschlossen')
-                    
+                if 'metrics' in first_item:
                     processed_data = {
                         'metrics': first_item.get('metrics', {}),
-                        'recommendations': recommendations,
-                        'customer_message': customer_message
+                        'recommendations': first_item.get('recommendations', []),
+                        'customer_message': first_item.get('summary', 'Analyse abgeschlossen')
                     }
-                    
-                    if st.session_state.debug_mode:
-                        st.success("✅ n8n-Array-Format erfolgreich verarbeitet!")
-                        
-        # Fallback: Prüfe direktes Objekt (nicht in Array)
         elif isinstance(response, dict):
-            if 'metrics' in response and 'recommendations' in response:
+            if 'metrics' in response:
                 processed_data = {
                     'metrics': response.get('metrics', {}),
                     'recommendations': response.get('recommendations', []),
                     'customer_message': response.get('customer_message', '')
                 }
         
-        # ===== ERGEBNIS VERARBEITEN =====
+        # 5. Daten zusammenführen und speichern
         if processed_data:
             metrics_data = processed_data.get('metrics', {})
             recommendations = processed_data.get('recommendations', [])
             customer_message = processed_data.get('customer_message', '')
             
-            # Tenant-spezifische Nachricht anpassen
-            if customer_message:
-                customer_message = customer_message.replace("Kunde", tenant_name)
-            
-            # Fallback-Empfehlungen wenn leer
+            # Fallback-Empfehlungen
             if not recommendations:
                 recommendations = [
                     f"Optimieren Sie Ihre Lagerauslastung für {tenant_name}",
                     "Automatische Zahlungserinnerungen einrichten",
-                    "Google Business Profile pflegen und Bewertungen sammeln"
+                    "Google Business Profile pflegen"
                 ]
-            
-            # Fallback-Metriken wenn leer ODER alle 0 (leere Excel)
-            all_zeros = True
-            for key in ['belegt', 'frei', 'belegungsgrad']:
-                if metrics_data.get(key, 0) != 0:
-                    all_zeros = False
-                    break
-            
-            if all_zeros or not metrics_data:
-                # Verwende Excel-Daten oder Fallback
-                if excel_merge and any(v != 0 for v in excel_merge.values() if isinstance(v, (int, float))):
-                    metrics_data = excel_merge
-                    if st.session_state.debug_mode:
-                        st.info("⚠️ Excel-Daten verwendet (n8n Metriken waren 0)")
-                else:
-                    metrics_data = {
-                        "belegt": 18,
-                        "frei": 6,
-                        "vertragsdauer_durchschnitt": 7.2,
-                        "reminder_automat": 15,
-                        "social_facebook": 280,
-                        "social_google": 58,
-                        "belegungsgrad": 75,
-                        "kundenherkunft": {"Online": 12, "Empfehlung": 6, "Vorbeikommen": 4},
-                        "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
-                        "neukunden_monat": [5, 4, 7, 6, 8, 9],
-                        "zahlungsstatus": {"bezahlt": 21, "offen": 2, "überfällig": 1}
-                    }
-                    if st.session_state.debug_mode:
-                        st.info("⚠️ Fallback-Metriken verwendet")
             
             # Mit Excel-Daten mergen
             merged_data = merge_data(metrics_data, excel_merge)
             merged_data['recommendations'] = recommendations
             merged_data['customer_message'] = customer_message
-            merged_data['tenant_id'] = tenant_id  # Tenant-ID in den Daten speichern
+            merged_data['tenant_id'] = tenant_id
+            merged_data['analysis_date'] = datetime.now().isoformat()
+            merged_data['files'] = [f.name for f in uploaded_files]
             
-            # Session State aktualisieren
-            st.session_state.prev = st.session_state.data.copy()
-            st.session_state.data = merged_data
+            # Nachher-Daten speichern
+            st.session_state.after_analysis = merged_data.copy()
+            st.session_state.current_data = merged_data.copy()
             
-            # History speichern (tenant-spezifisch)
-            st.session_state.history.append({
+            # History aktualisieren
+            history_entry = {
                 "ts": datetime.now().isoformat(),
                 "data": merged_data.copy(),
                 "files": [f.name for f in uploaded_files],
                 "tenant_id": tenant_id,
                 "tenant_name": tenant_name,
-                "source": "n8n"
-            })
+                "type": "analysis"
+            }
             
-            # Analyses-Usage erhöhen (Demo - später Datenbank)
+            st.session_state.analyses_history.append(history_entry)
+            
+            # Usage erhöhen
             if 'analyses_used' in st.session_state.current_tenant:
                 st.session_state.current_tenant['analyses_used'] += 1
             
-            st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}! ({len(recommendations)} Empfehlungen)")
+            st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}!")
             
-            # Zeige kurz die wichtigsten Metriken
-            if metrics_data:
-                with st.expander("📊 Analyseergebnisse", expanded=True):
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Belegt", merged_data.get('belegt', 'N/A'))
-                        st.metric("Frei", merged_data.get('frei', 'N/A'))
-                    with col2:
-                        st.metric("Belegungsgrad", f"{merged_data.get('belegungsgrad', 0)}%")
-                        st.metric("Ø Vertragsdauer", f"{merged_data.get('vertragsdauer_durchschnitt', 0)} Monate")
-                    with col3:
-                        st.metric("Zahlungserinnerungen", merged_data.get('reminder_automat', 'N/A'))
-                        st.metric("Social Media", f"{merged_data.get('social_facebook', 0)} FB, {merged_data.get('social_google', 0)} Google")
-                    
-                    # Zeige Empfehlungen
-                    if recommendations:
-                        st.subheader("🤖 KI-Empfehlungen")
-                        for i, rec in enumerate(recommendations[:3], 1):
-                            st.markdown(f"**{i}.** {rec}")
-                    
-                    # Zeige Kundennachricht
-                    if customer_message:
-                        st.subheader("📝 Zusammenfassung")
-                        st.info(customer_message)
+            # Vergleich anzeigen
+            st.session_state.show_comparison = True
             
             st.balloons()
             time.sleep(2)
@@ -429,195 +491,43 @@ def perform_analysis(uploaded_files):
         else:
             st.error("❌ n8n-Antwort hat unerwartetes Format")
             
-            # Zeige genau was falsch ist
+            # Zeige Debug-Info
             with st.expander("🔍 Problem-Details", expanded=True):
-                st.write("**n8n sendet dieses Format:**")
+                st.write("**n8n sendet:**")
                 st.json(response)
                 
                 st.write("**Streamlit erwartet EINES dieser Formate:**")
                 st.code("""
-OPTION A: Einzelnes Objekt mit metrics/recommendations/customer_message:
+OPTION 1 (NEUES FORMAT - empfohlen):
 {
-  "metrics": { ... },
-  "recommendations": ["String 1", "String 2"],
-  "customer_message": "Text"
+  "current_analysis": {
+    "metrics": { ... },
+    "recommendations": [...],
+    "customer_message": "...",
+    "analysis_date": "..."
+  },
+  "previous_analysis": {
+    "metrics": { ... },
+    "analysis_date": "..."
+  }
 }
 
-OPTION B: Ein Array mit einem Objekt, das metrics/recommendations enthält:
+OPTION 2 (ALTES FORMAT):
+{
+  "metrics": { ... },
+  "recommendations": [...],
+  "customer_message": "..."
+}
+
+OPTION 3 (ARRAY FORMAT):
 [
   {
     "metrics": { ... },
-    "recommendations": [{...}, {...}],  // ODER einfache Strings
-    "summary": "Text"
+    "recommendations": [...],
+    "summary": "..."
   }
 ]
                 """)
-                
-                st.warning("""
-                **Lösung:**
-                1. n8n muss ein einzelnes Objekt (nicht Array) senden
-                2. Empfehlungen sollten einfache Strings sein, nicht Objekte
-                3. ODER: Verwende den oben aktualisierten Streamlit-Code
-                """)
-
-def merge_data(base_dict, new_dict):
-    """Merge zwei Dictionaries."""
-    result = base_dict.copy() if base_dict else {}
-    
-    print(f"DEBUG merge_data: base_dict keys = {list(base_dict.keys()) if base_dict else 'empty'}")
-    print(f"DEBUG merge_data: new_dict keys = {list(new_dict.keys()) if new_dict else 'empty'}")
-    
-    if new_dict:
-        for key, value in new_dict.items():
-            if key not in ['kundenherkunft', 'zahlungsstatus', 'recommendations', 'customer_message']:
-                result[key] = value
-                print(f"DEBUG: Set {key} = {value}")
-        
-        if 'kundenherkunft' in new_dict:
-            if 'kundenherkunft' not in result:
-                result['kundenherkunft'] = {'Online': 0, 'Empfehlung': 0, 'Vorbeikommen': 0}
-            for k, v in new_dict['kundenherkunft'].items():
-                result['kundenherkunft'][k] = result['kundenherkunft'].get(k, 0) + v
-                print(f"DEBUG: Kundenherkunft {k} = {v}")
-        
-        if 'zahlungsstatus' in new_dict:
-            if 'zahlungsstatus' not in result:
-                result['zahlungsstatus'] = {'bezahlt': 0, 'offen': 0, 'überfällig': 0}
-            for k, v in new_dict['zahlungsstatus'].items():
-                result['zahlungsstatus'][k] = result['zahlungsstatus'].get(k, 0) + v
-                print(f"DEBUG: Zahlungsstatus {k} = {v}")
-    
-    print(f"DEBUG merge_data: result keys = {list(result.keys())}")
-    return result
-
-# ===== HAUPTAPP =====
-def main():
-    # Session State initialisieren
-    if "data" not in st.session_state:
-        st.session_state.data = DEFAULT_DATA.copy()
-    if "prev" not in st.session_state:
-        st.session_state.prev = DEFAULT_DATA.copy()
-    if "history" not in st.session_state:
-        st.session_state.history = []
-    if "n8n_url" not in st.session_state:
-        st.session_state.n8n_url = os.environ.get("N8N_URL", "")
-    if "debug_mode" not in st.session_state:
-        st.session_state.debug_mode = False
-    if "last_raw_response" not in st.session_state:
-        st.session_state.last_raw_response = None
-    
-    # MULTI-TENANT: Login-Status
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-    if "current_tenant" not in st.session_state:
-        st.session_state.current_tenant = None
-    
-    # ===== SIDEBAR MIT LOGIN =====
-    with st.sidebar:
-        st.title("🔐 Login & Einstellungen")
-        
-        # Login/Logout Bereich
-        if not st.session_state.logged_in:
-            st.subheader("Anmelden")
-            email = st.text_input("E-Mail", key="login_email")
-            password = st.text_input("Passwort", type="password", key="login_password")
-            
-            if st.button("🚀 Anmelden", type="primary", use_container_width=True):
-                if email in TENANTS:
-                    # In Produktion: Passwort prüfen!
-                    st.session_state.logged_in = True
-                    st.session_state.current_tenant = TENANTS[email]
-                    st.success(f"Willkommen, {TENANTS[email]['name']}!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("Ungültige E-Mail oder Passwort")
-        else:
-            # Eingeloggter Zustand
-            tenant = st.session_state.current_tenant
-            st.success(f"✅ Eingeloggt als: {tenant['name']}")
-            st.info(f"📋 Plan: {tenant['plan'].upper()}")
-            st.info(f"📊 Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
-            
-            # ✅ TENANT-ID ANZEIGEN (für Debugging wichtig)
-            st.info(f"🔑 Tenant-ID: `{tenant['tenant_id']}`")
-            
-            if st.button("🚪 Abmelden", use_container_width=True):
-                st.session_state.logged_in = False
-                st.session_state.current_tenant = None
-                st.session_state.data = DEFAULT_DATA.copy()
-                st.rerun()
-        
-        st.divider()
-        
-        # Nur wenn eingeloggt: Einstellungen anzeigen
-        if st.session_state.logged_in:
-            st.subheader("⚙️ n8n Konfiguration")
-            
-            # n8n URL
-            n8n_url = st.text_input(
-                "n8n Webhook URL",
-                value=st.session_state.n8n_url,
-                placeholder="https://tundtelectronics.app.n8n.cloud/webhook/process-business-data",
-                key="n8n_url_input"
-            )
-            st.session_state.n8n_url = n8n_url
-            
-            if n8n_url:
-                st.caption(f"Verwendet: `{n8n_url[:50]}...`")
-            
-            # Debug Mode
-            st.session_state.debug_mode = st.checkbox("🐛 Debug-Modus", key="debug_checkbox")
-            
-            st.divider()
-            
-            # Navigation (nur für eingeloggte Benutzer)
-            st.subheader("📱 Navigation")
-            page = st.radio(
-                "Menü",
-                ["📊 Übersicht", "👥 Kunden", "📦 Kapazität", "💰 Finanzen", "⚙️ System"],
-                key="nav_radio"
-            )
-            
-            st.divider()
-            
-            # Reset Button
-            if st.button("🗑️ Zurücksetzen", use_container_width=True, key="reset_btn"):
-                st.session_state.data = DEFAULT_DATA.copy()
-                st.session_state.prev = DEFAULT_DATA.copy()
-                st.session_state.history = []
-                st.session_state.last_raw_response = None
-                st.success("Zurückgesetzt!")
-                time.sleep(1)
-                st.rerun()
-            
-            # Debug Info anzeigen
-            if st.session_state.debug_mode and st.session_state.last_raw_response:
-                st.divider()
-                st.subheader("🔍 Letzte Rohantwort")
-                with st.expander("Anzeigen"):
-                    st.json(st.session_state.last_raw_response)
-        else:
-            # Nicht eingeloggt: Nur Info
-            st.info("👆 Bitte zuerst anmelden, um das Dashboard zu nutzen.")
-            page = "📊 Übersicht"  # Default-Seite
-    
-    # ===== HAUPTINHALT =====
-    if not st.session_state.logged_in:
-        # Login-Seite anzeigen
-        render_login_page()
-    else:
-        # Eingeloggte Benutzer sehen das Dashboard
-        if page == "📊 Übersicht":
-            render_overview()
-        elif page == "👥 Kunden":
-            render_customers()
-        elif page == "📦 Kapazität":
-            render_capacity()
-        elif page == "💰 Finanzen":
-            render_finance()
-        elif page == "⚙️ System":
-            render_system()
 
 # ===== SEITENFUNKTIONEN =====
 def render_login_page():
@@ -632,70 +542,92 @@ def render_login_page():
         
         **KI-gestützte Analyse für Self-Storage Unternehmen:**
         
-        ✅ **Auslastung optimieren**  
-        ✅ **Zahlungsmoral verbessern**  
-        ✅ **Marketing-ROI steigern**  
-        ✅ **Kundenbindung erhöhen**
+        ✅ **Durchgängiger Workflow** - Vom Login bis zum Vergleich  
+        ✅ **Vorher/Nachher Visualisierung** - Zeigt Veränderungen  
+        ✅ **Automatisches Laden** - Letzte Analyse nach Login  
+        ✅ **Zeitliche Entwicklung** - Alle Analysen im Überblick  
         
-        **Test-Zugänge:**
-        - **E-Mail:** `demo@kunde.de` → Tenant-ID: `kunde_demo_123`
-        - **E-Mail:** `test@firma.de` → Tenant-ID: `firma_test_456`
+        **Workflow:**
+        1. **Login** mit Tenant-Zugang
+        2. **Letzte Analyse** wird automatisch geladen
+        3. **Neue Daten** hochladen und analysieren
+        4. **Vergleich** Vorher vs. Nachher sehen
+        5. **History** aller Analysen durchsuchen
+        
+        **Demo-Zugänge:**
+        - **E-Mail:** `demo@kunde.de`
+        - **E-Mail:** `test@firma.de`
         - **Passwort:** (beliebig für Demo)
         """)
     
     with col2:
         st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600", 
                 caption="Data-Driven Decisions for SelfStorage")
+        
+        st.info("""
+        **📊 Beispiel-Vergleich:**
+        
+        **Bevor:**
+        - Belegungsgrad: 75%
+        - Ø Vertragsdauer: 7.2 Monate
+        - Offene Zahlungen: 3
+        
+        **Nach KI-Analyse:**
+        - Belegungsgrad: 82% (+7%)
+        - Ø Vertragsdauer: 8.1 Monate (+0.9)
+        - Offene Zahlungen: 1 (-2)
+        """)
     
     st.divider()
     
-    # Demo-Dashboard Vorschau
-    st.subheader("📊 Dashboard Vorschau")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Auslastung", "71%", "Verbesserungswürdig")
-    with col2:
-        st.metric("Ø Vertragsdauer", "8.5", "Monate")
-    with col3:
-        st.metric("Zahlungsmoral", "87%", "Bezugsrate")
-    with col4:
-        st.metric("Kunden-Zufriedenheit", "4.2/5", "Sterne")
+    # Feature-Vorschau
+    st.subheader("📈 Dashboard-Features")
     
-    st.info("💡 **Hinweis:** Dies ist eine Demo-Version. Für vollen Zugang bitte anmelden.")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("**Vergleichsansicht**")
+        st.write("Side-by-Side Diagramme")
+        st.write("Delta-Berechnungen")
+        st.write("Prozentuale Veränderungen")
+    
+    with col2:
+        st.markdown("**History-Tracking**")
+        st.write("Alle Analysen speichern")
+        st.write("Zeitreihen-Diagramme")
+        st.write("Export-Funktion")
+    
+    with col3:
+        st.markdown("**KI-Integration**")
+        st.write("Automatische Empfehlungen")
+        st.write("Datenbank-Anbindung")
+        st.write("Echtzeit-Updates")
 
 def render_overview():
-    """Hauptseite mit Upload und Analyse."""
-    # Debug: Zeige die aktuellen Session-Daten
-    if st.session_state.debug_mode:
-        st.write("🔍 CURRENT SESSION DATA IN RENDER_OVERVIEW:", st.session_state.data)
-    
-    tenant = st.session_state.current_tenant
-    st.title(f"📊 Dashboard - {tenant['name']}")
-    # ... restlicher Code
-    """Hauptseite mit Upload und Analyse."""
+    """Hauptseite mit Vergleich und History."""
     tenant = st.session_state.current_tenant
     st.title(f"📊 Dashboard - {tenant['name']}")
     
-    # Tenant-Info Box
+    # Tenant-Info
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.info(f"**Tenant-ID:** `{tenant['tenant_id']}`")
     with col2:
         st.info(f"**Plan:** {tenant['plan'].upper()}")
     with col3:
-        st.info(f"**Analysen:** {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+        used = tenant.get('analyses_used', 0)
+        limit = tenant.get('analyses_limit', '∞')
+        st.info(f"**Analysen:** {used}/{limit}")
     with col4:
-        st.info(f"**Unternehmen:** {tenant['name']}")
-    
-    # 🎯 WICHTIGER HINWEIS ZUR TENANT-ID
-    st.info("""
-    **ℹ️ Wichtig für n8n-Kommunikation:** 
-    Die Tenant-ID `{tenant_id}` wird automatisch mit jeder hochgeladenen Datei an n8n gesendet.
-    Diese ID wird verwendet, um Ihre Daten in der Datenbank zu identifizieren.
-    """.format(tenant_id=tenant['tenant_id']))
+        current_date = st.session_state.current_data.get('analysis_date', '')
+        if current_date:
+            display_date = current_date[:10] if len(current_date) > 10 else current_date
+            st.info(f"**Letzte Analyse:** {display_date}")
+        else:
+            st.info("**Letzte Analyse:** Keine")
     
     # Upload Bereich
-    st.header("📥 Daten analysieren")
+    st.header("📥 Neue Analyse durchführen")
     
     uploaded_files = st.file_uploader(
         "Dateien hochladen (Excel/CSV)",
@@ -704,187 +636,425 @@ def render_overview():
         key="file_uploader"
     )
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        analyze_btn = st.button("🚀 KI-Analyse starten", type="primary", use_container_width=True, key="analyze_btn")
+        analyze_btn = st.button("🚀 KI-Analyse starten", type="primary", use_container_width=True,
+                               disabled=not uploaded_files)
     with col2:
-        mock_btn = st.button("🧪 Mock-Daten", use_container_width=True, key="mock_btn")
-    with col3:
-        if st.button("📋 Datenvorschau", use_container_width=True, key="preview_btn") and uploaded_files:
-            try:
-                df = pd.read_excel(uploaded_files[0])
-                st.dataframe(df.head(), width='stretch')
-                st.caption(f"Datei: {uploaded_files[0].name} | Größe: {len(uploaded_files[0].getvalue())} bytes")
-            except:
-                st.warning("Konnte Datei nicht lesen")
+        if st.button("🔄 Letzte Analyse neu laden", use_container_width=True):
+            load_last_analysis()
+            st.session_state.show_comparison = False
+            st.success("Letzte Analyse neu geladen!")
+            time.sleep(1)
+            st.rerun()
     
-    # Mock-Daten
-    if mock_btn:
-        mock_data = {
-            "belegt": 22, "frei": 3, "belegungsgrad": 88, 
-            "vertragsdauer_durchschnitt": 9.1,
-            "recommendations": [
-                f"Testempfehlung für {tenant['name']}",
-                "Optimieren Sie Ihre Lagerauslastung",
-                "Starten Sie eine Marketing-Kampagne"
-            ],
-            "customer_message": f"Mock-Daten für {tenant['name']} (Tenant-ID: {tenant['tenant_id']}) geladen."
-        }
-        st.session_state.prev = st.session_state.data.copy()
-        st.session_state.data = {**st.session_state.data, **mock_data}
-        st.success("✅ Mock-Daten geladen!")
-        time.sleep(1)
-        st.rerun()
-    
-    # Echte Analyse (MIT TENANT-ID)
     if analyze_btn and uploaded_files:
         perform_analysis(uploaded_files)
     
-    # KPIs anzeigen
-    st.header("📈 Key Performance Indicators")
-    data = st.session_state.data
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Belegt", data.get("belegt", 0))
-    with col2:
-        st.metric("Frei", data.get("frei", 0))
-    with col3:
-        st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
-    with col4:
-        st.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0)} Monate")
-    
-    # Charts
-    st.header("📊 Visualisierungen")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        import plotly.graph_objects as go
-        labels = data.get("neukunden_labels", [])
-        values = data.get("neukunden_monat", [])
-        fig = go.Figure(data=[go.Bar(x=labels, y=values)])
-        fig.update_layout(title="Neukunden pro Monat", height=300)
-        st.plotly_chart(fig, width='stretch')
-    
-    with col2:
-        belegung = data.get("belegungsgrad", 0)
-        fig = go.Figure(data=[go.Pie(
-            labels=["Belegt", "Frei"],
-            values=[belegung, 100 - belegung],
-            hole=0.6
-        )])
-        fig.update_layout(title="Belegungsgrad", height=300)
-        st.plotly_chart(fig, width='stretch')
-    
-    # KI-Empfehlungen
-    recommendations = data.get("recommendations", [])
-    if recommendations:
-        st.header("🤖 KI-Empfehlungen")
-        for i, rec in enumerate(recommendations, 1):
-            st.markdown(f"**{i}.** {rec}")
+    # ===== VERGLEICHSANSICHT =====
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis and st.session_state.after_analysis:
+        st.header("📈 Vergleich: Vorher vs. Nachher")
         
-        if data.get("customer_message"):
-            with st.expander("📝 Kundennachricht"):
-                st.info(data["customer_message"])
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        
+        # KPIs im Vergleich
+        st.subheader("📊 Key Performance Indicators")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            before_val = before.get('belegungsgrad', 0)
+            after_val = after.get('belegungsgrad', 0)
+            delta = after_val - before_val
+            st.metric("Belegungsgrad", 
+                     f"{after_val}%", 
+                     f"{delta:+.1f}%")
+        
+        with col2:
+            before_val = before.get('vertragsdauer_durchschnitt', 0)
+            after_val = after.get('vertragsdauer_durchschnitt', 0)
+            delta = after_val - before_val
+            st.metric("Ø Vertragsdauer", 
+                     f"{after_val:.1f} Monate", 
+                     f"{delta:+.1f}")
+        
+        with col3:
+            before_val = before.get('belegt', 0)
+            after_val = after.get('belegt', 0)
+            delta = after_val - before_val
+            st.metric("Belegte Einheiten", 
+                     after_val, 
+                     f"{delta:+d}")
+        
+        with col4:
+            before_social = before.get('social_facebook', 0) + before.get('social_google', 0)
+            after_social = after.get('social_facebook', 0) + after.get('social_google', 0)
+            delta = after_social - before_social
+            st.metric("Social Engagement", 
+                     after_social, 
+                     f"{delta:+d}")
+        
+        # Vergleichsdiagramme
+        st.subheader("📉 Detail-Vergleich")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Belegungsgrad Vergleich
+            fig = create_comparison_chart(before, after, 'belegungsgrad', 'Belegungsgrad (%)')
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Kundenherkunft Vergleich
+            if 'kundenherkunft' in before and 'kundenherkunft' in after:
+                fig = make_subplots(rows=1, cols=2, 
+                                  subplot_titles=('Vorher', 'Nachher'),
+                                  specs=[[{'type':'domain'}, {'type':'domain'}]])
+                
+                fig.add_trace(go.Pie(labels=list(before['kundenherkunft'].keys()),
+                                    values=list(before['kundenherkunft'].values()),
+                                    name="Vorher"), 1, 1)
+                
+                fig.add_trace(go.Pie(labels=list(after['kundenherkunft'].keys()),
+                                    values=list(after['kundenherkunft'].values()),
+                                    name="Nachher"), 1, 2)
+                
+                fig.update_layout(height=300, title_text="Kundenherkunft")
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Zahlungsstatus Vergleich
+            if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
+                categories = list(before['zahlungsstatus'].keys())
+                before_vals = [before['zahlungsstatus'][k] for k in categories]
+                after_vals = [after['zahlungsstatus'][k] for k in categories]
+                
+                fig = go.Figure(data=[
+                    go.Bar(name='Vorher', x=categories, y=before_vals),
+                    go.Bar(name='Nachher', x=categories, y=after_vals)
+                ])
+                fig.update_layout(title='Zahlungsstatus Vergleich', height=300, barmode='group')
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Social Media Vergleich
+            social_metrics = ['social_facebook', 'social_google']
+            if all(m in before and m in after for m in social_metrics):
+                fig = go.Figure(data=[
+                    go.Bar(name='Facebook Vorher', x=['Facebook'], y=[before['social_facebook']]),
+                    go.Bar(name='Facebook Nachher', x=['Facebook'], y=[after['social_facebook']]),
+                    go.Bar(name='Google Vorher', x=['Google'], y=[before['social_google']]),
+                    go.Bar(name='Google Nachher', x=['Google'], y=[after['social_google']])
+                ])
+                fig.update_layout(title='Social Media Vergleich', height=300, barmode='group')
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # Empfehlungen
+        recommendations = after.get('recommendations', [])
+        if recommendations:
+            st.subheader("🤖 KI-Empfehlungen")
+            for i, rec in enumerate(recommendations[:5], 1):
+                st.markdown(f"**{i}.** {rec}")
+        
+        if after.get('customer_message'):
+            with st.expander("📝 Zusammenfassung"):
+                st.info(after['customer_message'])
+    
+    # ===== AKTUELLE DATEN (wenn kein Vergleich) =====
+    else:
+        data = st.session_state.current_data
+        
+        st.subheader("📊 Aktuelle KPIs")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
+        with col2:
+            st.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0)} Monate")
+        with col3:
+            st.metric("Belegte Einheiten", data.get('belegt', 0))
+        with col4:
+            facebook = data.get('social_facebook', 0)
+            google = data.get('social_google', 0)
+            st.metric("Social Engagement", facebook + google)
+        
+        # Aktuelle Diagramme
+        st.subheader("📈 Aktuelle Visualisierungen")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Belegungsgrad
+            belegung = data.get('belegungsgrad', 0)
+            fig = go.Figure(data=[go.Pie(
+                labels=["Belegt", "Frei"],
+                values=[belegung, max(100 - belegung, 0)],
+                hole=0.6
+            )])
+            fig.update_layout(title="Belegungsgrad", height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Kundenherkunft
+            if 'kundenherkunft' in data:
+                df = pd.DataFrame({
+                    "Kanal": list(data['kundenherkunft'].keys()),
+                    "Anzahl": list(data['kundenherkunft'].values())
+                })
+                fig = px.pie(df, values='Anzahl', names='Kanal')
+                fig.update_layout(title="Kundenherkunft", height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # Neukunden-Diagramm als Fallback
+                labels = data.get('neukunden_labels', ['Jan', 'Feb', 'Mär'])
+                values = data.get('neukunden_monat', [5, 4, 7])
+                fig = go.Figure(data=[go.Bar(x=labels, y=values)])
+                fig.update_layout(title="Neukunden pro Monat", height=300)
+                st.plotly_chart(fig, use_container_width=True)
+    
+    # ===== HISTORY / ZEITVERLAUF =====
+    st.header("📅 Analyse-History")
+    
+    tenant_history = [h for h in st.session_state.analyses_history 
+                     if h.get('tenant_id') == tenant['tenant_id']]
+    
+    if tenant_history:
+        # Zeitreihendiagramme
+        st.subheader("Entwicklung über Zeit")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = create_timeseries_chart(tenant_history, 'belegungsgrad', 'Belegungsgrad (%)')
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            fig = create_timeseries_chart(tenant_history, 'vertragsdauer_durchschnitt', 'Vertragsdauer (Monate)')
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # History-Tabelle
+        st.subheader("Vergangene Analysen")
+        history_df = []
+        for entry in reversed(tenant_history[-10:]):  # Letzte 10
+            entry_date = entry.get('ts', '')[:16].replace('T', ' ')
+            history_df.append({
+                'Datum': entry_date,
+                'Dateien': len(entry.get('files', [])),
+                'Belegungsgrad': f"{entry['data'].get('belegungsgrad', 0)}%",
+                'Empfehlungen': len(entry['data'].get('recommendations', []))
+            })
+        
+        if history_df:
+            st.dataframe(pd.DataFrame(history_df), use_container_width=True)
+    else:
+        st.info("📝 Noch keine Analysen durchgeführt. Starten Sie Ihre erste KI-Analyse!")
 
 def render_customers():
-    """Kundenseite."""
+    """Kundenseite mit Vergleich."""
     st.title("👥 Kundenanalyse")
     
-    data = st.session_state.data
+    data = st.session_state.current_data
     
-    # Kundenherkunft
-    st.header("Kundenherkunft")
-    herkunft = data.get("kundenherkunft", {})
-    
-    if herkunft:
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        
+        st.header("Kundenentwicklung")
+        
         col1, col2 = st.columns(2)
+        
         with col1:
-            import plotly.express as px
-            df = pd.DataFrame({
-                "Kanal": list(herkunft.keys()),
-                "Anzahl": list(herkunft.values())
-            })
-            fig = px.pie(df, values='Anzahl', names='Kanal')
-            st.plotly_chart(fig, width='stretch')
+            st.subheader("Vorher")
+            if 'kundenherkunft' in before:
+                df_before = pd.DataFrame({
+                    "Kanal": list(before['kundenherkunft'].keys()),
+                    "Anzahl": list(before['kundenherkunft'].values())
+                })
+                st.dataframe(df_before, use_container_width=True)
+        
         with col2:
-            st.dataframe(df, width='stretch')
-    
-    # Empfehlungen
-    st.header("Kundenakquise")
-    st.markdown("""
-    - **Empfehlungsprogramm**: 25€ Guthaben pro Neukunde
-    - **Google Business**: Regelmäßige Updates und Bewertungen
-    - **Zielgruppen-Marketing**: Gezielte Ansprache
-    """)
+            st.subheader("Nachher")
+            if 'kundenherkunft' in after:
+                df_after = pd.DataFrame({
+                    "Kanal": list(after['kundenherkunft'].keys()),
+                    "Anzahl": list(after['kundenherkunft'].values())
+                })
+                st.dataframe(df_after, use_container_width=True)
+        
+        # Veränderungen berechnen
+        if 'kundenherkunft' in before and 'kundenherkunft' in after:
+            st.subheader("Veränderungen")
+            changes = []
+            for key in before['kundenherkunft'].keys():
+                before_val = before['kundenherkunft'].get(key, 0)
+                after_val = after['kundenherkunft'].get(key, 0)
+                change = after_val - before_val
+                percent = (change / before_val * 100) if before_val > 0 else 0
+                changes.append({
+                    'Kanal': key,
+                    'Vorher': before_val,
+                    'Nachher': after_val,
+                    'Δ Absolut': change,
+                    'Δ %': f"{percent:+.1f}%" if before_val > 0 else "Neu"
+                })
+            
+            st.dataframe(pd.DataFrame(changes), use_container_width=True)
+    else:
+        # Normale Ansicht
+        herkunft = data.get("kundenherkunft", {})
+        
+        if herkunft:
+            col1, col2 = st.columns(2)
+            with col1:
+                df = pd.DataFrame({
+                    "Kanal": list(herkunft.keys()),
+                    "Anzahl": list(herkunft.values())
+                })
+                st.dataframe(df, use_container_width=True)
+            with col2:
+                fig = px.pie(df, values='Anzahl', names='Kanal')
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Keine Kundendaten verfügbar. Führen Sie eine Analyse durch.")
 
 def render_capacity():
-    """Kapazitätsseite."""
+    """Kapazitätsseite mit Vergleich."""
     st.title("📦 Kapazitätsmanagement")
     
-    data = st.session_state.data
+    data = st.session_state.current_data
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Belegte Einheiten", data.get("belegt", 0))
-        st.metric("Freie Einheiten", data.get("frei", 0))
-        st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
-    with col2:
-        import plotly.graph_objects as go
-        fig = go.Figure(data=[go.Bar(
-            x=["Belegt", "Frei"],
-            y=[data.get("belegt", 0), data.get("frei", 0)]
-        )])
-        fig.update_layout(title="Kapazitätsverteilung", height=300)
-        st.plotly_chart(fig, width='stretch')
-    
-    # Optimierung
-    st.header("Optimierungsvorschläge")
-    belegung = data.get("belegungsgrad", 0)
-    
-    if belegung < 85:
-        st.warning(f"Auslastung ({belegung}%) optimierbar")
-        st.markdown("- Kurzzeit-Aktionen starten\n- Marketing intensivieren")
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        
+        st.header("Kapazitätsentwicklung")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Vorher")
+            st.metric("Belegte Einheiten", before.get('belegt', 0))
+            st.metric("Freie Einheiten", before.get('frei', 0))
+            st.metric("Belegungsgrad", f"{before.get('belegungsgrad', 0)}%")
+        
+        with col2:
+            st.subheader("Nachher")
+            st.metric("Belegte Einheiten", after.get('belegt', 0))
+            st.metric("Freie Einheiten", after.get('frei', 0))
+            st.metric("Belegungsgrad", f"{after.get('belegungsgrad', 0)}%")
+        
+        # Kapazitätsdiagramm Vergleich
+        st.subheader("Kapazitätsverteilung")
+        
+        categories = ['Belegt', 'Frei']
+        before_vals = [before.get('belegt', 0), before.get('frei', 0)]
+        after_vals = [after.get('belegt', 0), after.get('frei', 0)]
+        
+        fig = go.Figure(data=[
+            go.Bar(name='Vorher', x=categories, y=before_vals),
+            go.Bar(name='Nachher', x=categories, y=after_vals)
+        ])
+        fig.update_layout(title='Kapazitätsverteilung Vergleich', barmode='group', height=400)
+        st.plotly_chart(fig, use_container_width=True)
+        
     else:
-        st.success(f"Auslastung ({belegung}%) sehr gut")
-
-def render_finance():
-    """Finanzseite."""
-    st.title("💰 Finanzübersicht")
-    
-    data = st.session_state.data
-    
-    # Zahlungsstatus
-    st.header("Zahlungsstatus")
-    status = data.get("zahlungsstatus", {})
-    
-    if status:
+        # Normale Ansicht
         col1, col2 = st.columns(2)
         with col1:
-            df = pd.DataFrame({
-                "Status": list(status.keys()),
-                "Anzahl": list(status.values())
-            })
-            st.dataframe(df, width='stretch')
+            st.metric("Belegte Einheiten", data.get("belegt", 0))
+            st.metric("Freie Einheiten", data.get("frei", 0))
+            st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
+        
         with col2:
-            import plotly.express as px
-            fig = px.pie(df, values='Anzahl', names='Status')
-            st.plotly_chart(fig, width='stretch')
+            fig = go.Figure(data=[go.Bar(
+                x=["Belegt", "Frei"],
+                y=[data.get("belegt", 0), data.get("frei", 0)]
+            )])
+            fig.update_layout(title="Kapazitätsverteilung", height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+def render_finance():
+    """Finanzseite mit Vergleich."""
+    st.title("💰 Finanzübersicht")
     
-    # Finanztipps
-    st.header("Finanzoptimierung")
-    offen = status.get("offen", 0)
-    überfällig = status.get("überfällig", 0)
+    data = st.session_state.current_data
     
-    if offen + überfällig > 0:
-        st.warning(f"{offen + überfällig} offene/überfällige Zahlungen")
-        st.markdown("- Automatische Erinnerungen\n- Skonto anbieten")
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        
+        st.header("Finanzentwicklung")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Vorher")
+            if 'zahlungsstatus' in before:
+                df_before = pd.DataFrame({
+                    "Status": list(before['zahlungsstatus'].keys()),
+                    "Anzahl": list(before['zahlungsstatus'].values())
+                })
+                st.dataframe(df_before, use_container_width=True)
+        
+        with col2:
+            st.subheader("Nachher")
+            if 'zahlungsstatus' in after:
+                df_after = pd.DataFrame({
+                    "Status": list(after['zahlungsstatus'].keys()),
+                    "Anzahl": list(after['zahlungsstatus'].values())
+                })
+                st.dataframe(df_after, use_container_width=True)
+        
+        # Zahlungsmoral berechnen
+        if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
+            st.subheader("Zahlungsmoral")
+            
+            before_total = sum(before['zahlungsstatus'].values())
+            before_paid = before['zahlungsstatus'].get('bezahlt', 0)
+            before_moral = (before_paid / before_total * 100) if before_total > 0 else 0
+            
+            after_total = sum(after['zahlungsstatus'].values())
+            after_paid = after['zahlungsstatus'].get('bezahlt', 0)
+            after_moral = (after_paid / after_total * 100) if after_total > 0 else 0
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Zahlungsmoral Vorher", f"{before_moral:.1f}%")
+            with col2:
+                delta = after_moral - before_moral
+                st.metric("Zahlungsmoral Nachher", f"{after_moral:.1f}%", f"{delta:+.1f}%")
+    
+    else:
+        # Normale Ansicht
+        status = data.get("zahlungsstatus", {})
+        
+        if status:
+            col1, col2 = st.columns(2)
+            with col1:
+                df = pd.DataFrame({
+                    "Status": list(status.keys()),
+                    "Anzahl": list(status.values())
+                })
+                st.dataframe(df, use_container_width=True)
+            
+            with col2:
+                # Zahlungsmoral berechnen
+                total = sum(status.values())
+                paid = status.get('bezahlt', 0)
+                moral = (paid / total * 100) if total > 0 else 0
+                
+                st.metric("Zahlungsmoral", f"{moral:.1f}%")
+                
+                fig = px.pie(df, values='Anzahl', names='Status')
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Keine Finanzdaten verfügbar. Führen Sie eine Analyse durch.")
 
 def render_system():
-    """Systemseite."""
+    """Systemseite mit Export."""
     st.title("⚙️ System & Export")
     
-    data = st.session_state.data
+    data = st.session_state.current_data
     tenant = st.session_state.current_tenant
     
     # Tenant Info
@@ -900,64 +1070,259 @@ def render_system():
     # Export
     st.header("Daten exportieren")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
+        # Aktuelle Daten
         csv = pd.DataFrame([data]).to_csv(index=False)
         st.download_button(
-            "⬇️ CSV Export",
+            "⬇️ Aktuelle Daten (CSV)",
             csv,
-            f"storage_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.csv",
+            f"storage_current_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.csv",
             "text/csv",
             use_container_width=True
         )
+    
     with col2:
-        json_str = json.dumps(data, indent=2, ensure_ascii=False)
-        st.download_button(
-            "⬇️ JSON Export",
-            json_str,
-            f"storage_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json",
-            "application/json",
-            use_container_width=True
-        )
+        # Vergleichsdaten (wenn vorhanden)
+        if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+            comparison_data = {
+                'vorher': st.session_state.before_analysis,
+                'nachher': st.session_state.after_analysis,
+                'vergleich_datum': datetime.now().isoformat()
+            }
+            json_str = json.dumps(comparison_data, indent=2, ensure_ascii=False)
+            st.download_button(
+                "⬇️ Vergleich (JSON)",
+                json_str,
+                f"storage_comparison_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json",
+                "application/json",
+                use_container_width=True
+            )
+        else:
+            st.button("⬇️ Vergleich (JSON)", disabled=True, use_container_width=True,
+                     help="Kein Vergleich verfügbar. Führen Sie eine Analyse durch.")
     
-    # History (tenant-spezifisch)
+    with col3:
+        # History Export
+        tenant_history = [h for h in st.session_state.analyses_history 
+                         if h.get('tenant_id') == tenant['tenant_id']]
+        if tenant_history:
+            history_json = json.dumps(tenant_history, indent=2, ensure_ascii=False)
+            st.download_button(
+                "⬇️ Gesamte History (JSON)",
+                history_json,
+                f"storage_history_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json",
+                "application/json",
+                use_container_width=True
+            )
+        else:
+            st.button("⬇️ History (JSON)", disabled=True, use_container_width=True,
+                     help="Keine History verfügbar")
+    
+    # History Management
     st.header("Analyserverlauf")
-    history = [h for h in st.session_state.history if h.get('tenant_id') == tenant['tenant_id']]
     
-    if history:
-        for i, entry in enumerate(reversed(history[-3:]), 1):
-            with st.expander(f"Analyse {i} - {entry['ts'][11:16]} ({len(entry.get('files', []))} Dateien)"):
-                st.write(f"**Dateien:** {', '.join(entry['files'])}")
-                st.write(f"**Tenant:** {entry.get('tenant_name', entry.get('tenant_id', 'N/A'))}")
-                st.write(f"**Quelle:** {entry.get('source', 'n8n')}")
-                if entry.get('data', {}).get('recommendations'):
+    tenant_history = [h for h in st.session_state.analyses_history 
+                     if h.get('tenant_id') == tenant['tenant_id']]
+    
+    if tenant_history:
+        # Auswahl für Detailansicht
+        history_options = [f"{h['ts'][:16]} - {len(h.get('files', []))} Dateien" 
+                          for h in reversed(tenant_history)]
+        
+        selected = st.selectbox("Analyse auswählen", history_options, key="history_select")
+        
+        if selected:
+            idx = history_options.index(selected)
+            selected_entry = list(reversed(tenant_history))[idx]
+            
+            with st.expander("📋 Analyse-Details", expanded=True):
+                st.write(f"**Datum:** {selected_entry['ts'][:19]}")
+                st.write(f"**Dateien:** {', '.join(selected_entry.get('files', []))}")
+                
+                if selected_entry['data'].get('recommendations'):
                     st.write("**Empfehlungen:**")
-                    for rec in entry['data']['recommendations'][:2]:
+                    for rec in selected_entry['data']['recommendations'][:3]:
                         st.write(f"- {rec}")
+                
+                # Diese Analyse als aktuell setzen
+                if st.button("Diese Analyse laden", key="load_selected"):
+                    st.session_state.current_data = selected_entry['data'].copy()
+                    st.session_state.before_analysis = selected_entry['data'].copy()
+                    st.session_state.show_comparison = False
+                    st.success("Analyse geladen!")
+                    time.sleep(1)
+                    st.rerun()
+        
+        # Clear History Button
+        if st.button("🗑️ History löschen", type="secondary"):
+            # Nur History für diesen Tenant löschen
+            st.session_state.analyses_history = [
+                h for h in st.session_state.analyses_history 
+                if h.get('tenant_id') != tenant['tenant_id']
+            ]
+            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.show_comparison = False
+            st.success("History gelöscht!")
+            st.rerun()
     else:
         st.info("Noch keine Analysen für diesen Tenant")
     
     # Systeminfo
     st.header("Systeminformation")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Analysen gesamt", len(history))
-        st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
+        st.metric("Analysen gesamt", len(tenant_history))
     with col2:
+        st.metric("Vergleich aktiv", "Ja" if st.session_state.get('show_comparison') else "Nein")
+    with col3:
+        st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
+    with col4:
         st.metric("n8n URL", "Gesetzt" if st.session_state.n8n_url else "Fehlt")
-        st.metric("Session", "Aktiv")
+
+# ===== HAUPTAPP =====
+def main():
+    # Session State initialisieren
+    if "current_data" not in st.session_state:
+        st.session_state.current_data = DEFAULT_DATA.copy()
+    if "before_analysis" not in st.session_state:
+        st.session_state.before_analysis = None
+    if "after_analysis" not in st.session_state:
+        st.session_state.after_analysis = None
+    if "analyses_history" not in st.session_state:
+        st.session_state.analyses_history = []
+    if "n8n_url" not in st.session_state:
+        st.session_state.n8n_url = os.environ.get("N8N_URL", "")
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False
+    if "show_comparison" not in st.session_state:
+        st.session_state.show_comparison = False
+    if "last_analysis_loaded" not in st.session_state:
+        st.session_state.last_analysis_loaded = False
     
-    # n8n Workflow Info
-    st.header("n8n Integration")
-    st.info("""
-    **Datenfluss:** Streamlit → n8n Webhook → KI-Analyse → Datenbank → Streamlit
+    # Login-Status
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+    if "current_tenant" not in st.session_state:
+        st.session_state.current_tenant = None
     
-    **Wichtig:**
-    1. Tenant-ID wird automatisch an n8n gesendet
-    2. n8n erwartet tenant_id im `formData` Teil des Requests
-    3. Die Antwort wird automatisch für Ihr Dashboard verarbeitet
-    """)
+    # ===== SIDEBAR =====
+    with st.sidebar:
+        st.title("🔐 Login & Einstellungen")
+        
+        if not st.session_state.logged_in:
+            # Login Form
+            st.subheader("Anmelden")
+            email = st.text_input("E-Mail", key="login_email")
+            password = st.text_input("Passwort", type="password", key="login_password")
+            
+            if st.button("🚀 Anmelden", type="primary", use_container_width=True):
+                if email in TENANTS:
+                    st.session_state.logged_in = True
+                    st.session_state.current_tenant = TENANTS[email]
+                    
+                    # LETZTE ANALYSE LADEN (automatisch nach Login!)
+                    load_success = load_last_analysis()
+                    
+                    if load_success:
+                        st.success(f"Willkommen, {TENANTS[email]['name']}! Letzte Analyse geladen.")
+                    else:
+                        st.warning(f"Willkommen, {TENANTS[email]['name']}! Keine vorherige Analyse gefunden.")
+                    
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("Ungültige E-Mail oder Passwort")
+        else:
+            # Eingeloggt
+            tenant = st.session_state.current_tenant
+            st.success(f"✅ Eingeloggt als: {tenant['name']}")
+            
+            # Tenant Info
+            st.info(f"📋 Plan: {tenant['plan'].upper()}")
+            st.info(f"📊 Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+            st.info(f"🔑 Tenant-ID: `{tenant['tenant_id']}`")
+            
+            if st.button("🚪 Abmelden", use_container_width=True):
+                st.session_state.logged_in = False
+                st.session_state.current_tenant = None
+                st.session_state.show_comparison = False
+                st.session_state.last_analysis_loaded = False
+                st.rerun()
+        
+        st.divider()
+        
+        # Einstellungen (nur wenn eingeloggt)
+        if st.session_state.logged_in:
+            st.subheader("⚙️ Konfiguration")
+            
+            # n8n URL
+            n8n_url = st.text_input(
+                "n8n Webhook URL",
+                value=st.session_state.n8n_url,
+                placeholder="https://your-n8n-instance.com/webhook/...",
+                key="n8n_url_input"
+            )
+            st.session_state.n8n_url = n8n_url
+            
+            if n8n_url:
+                st.caption(f"Verwendet: `{n8n_url[:50]}...`")
+            
+            # Debug Mode
+            st.session_state.debug_mode = st.checkbox("🐛 Debug-Modus")
+            
+            st.divider()
+            
+            # Navigation
+            st.subheader("📱 Navigation")
+            page = st.radio(
+                "Menü",
+                ["📊 Übersicht", "👥 Kunden", "📦 Kapazität", "💰 Finanzen", "⚙️ System"],
+                key="nav_radio"
+            )
+            
+            st.divider()
+            
+            # Reset Buttons
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🔄 Vergleich zurücksetzen", use_container_width=True):
+                    st.session_state.show_comparison = False
+                    st.success("Vergleich zurückgesetzt!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            with col2:
+                if st.button("🗑️ Alle Daten", type="secondary", use_container_width=True):
+                    st.session_state.current_data = DEFAULT_DATA.copy()
+                    st.session_state.before_analysis = None
+                    st.session_state.after_analysis = None
+                    st.session_state.show_comparison = False
+                    st.success("Daten zurückgesetzt!")
+                    time.sleep(1)
+                    st.rerun()
+        else:
+            page = "📊 Übersicht"
+    
+    # ===== HAUPTINHALT =====
+    if not st.session_state.logged_in:
+        # Login-Seite
+        render_login_page()
+    else:
+        # Dashboard-Seiten
+        if page == "📊 Übersicht":
+            render_overview()
+        elif page == "👥 Kunden":
+            render_customers()
+        elif page == "📦 Kapazität":
+            render_capacity()
+        elif page == "💰 Finanzen":
+            render_finance()
+        elif page == "⚙️ System":
+            render_system()
 
 # ===== APP START =====
 if __name__ == "__main__":
