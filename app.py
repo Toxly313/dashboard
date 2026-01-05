@@ -290,12 +290,20 @@ def load_last_analysis():
         return True
     
     with st.spinner("📊 Lade letzte Analyse..."):
-        # GET-LAST an n8n senden
-        status, message, response = post_to_n8n_get_last(
+        # GET-LAST an n8n senden MIT leerer Datei
+        dummy_file = {
+            "name": "get_last_request.json",
+            "content": json.dumps({"mode": "get_last"}).encode('utf-8'),
+            "type": "application/json"
+        }
+        
+        status, message, response = post_to_n8n_analyze(
             n8n_url,
+            dummy_file,
             tenant_id,
             str(uuid.uuid4())
         )
+        # ... Rest bleibt
         
         if status == 200 and response:
             if response.get('current_analysis'):
