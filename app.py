@@ -524,7 +524,6 @@ def render_finance():
                 st.plotly_chart(fig, use_container_width=True)
         else: 
             st.info("Keine Finanzdaten verfügbar. Führen Sie eine Analyse durch.")
-
 def render_system():
     st.title("System & Export")
     data = st.session_state.current_data
