@@ -37,7 +37,17 @@ DEFAULT_DATA = {
 # HILFSFUNKTIONEN
 def post_to_n8n_get_last(url, tenant_id, uuid_str):
     print(f"\nGET-LAST Request für Tenant: {tenant_id}")
-    payload = {"tenant_id": tenant_id, "uuid": uuid_str, "action": "analyze", "metadata": {"source": "streamlit", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "purpose": "load_last_analysis", "mode": "get_last"}}
+    payload = {
+        "tenant_id": tenant_id, 
+        "uuid": uuid_str, 
+        "action": "analyze", 
+        "metadata": {
+            "source": "streamlit", 
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+            "purpose": "load_last_analysis", 
+            "mode": "get_last"
+        }
+    }
     headers = {'Content-Type': 'application/json'}
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -60,11 +70,25 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
 
 def post_to_n8n_analyze(url, file_tuple, tenant_id, uuid_str):
     print(f"\nANALYZE Request für Tenant: {tenant_id}")
-    payload = {"tenant_id": tenant_id, "uuid": uuid_str, "action": "analyze", "metadata": {"source": "streamlit", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "purpose": "new_analysis"}}
+    payload = {
+        "tenant_id": tenant_id, 
+        "uuid": uuid_str, 
+        "action": "analyze", 
+        "metadata": {
+            "source": "streamlit", 
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+            "purpose": "new_analysis"
+        }
+    }
     if file_tuple:
         file_name, file_content, file_type = file_tuple
         file_b64 = base64.b64encode(file_content).decode('utf-8')
-        payload["file"] = {"filename": file_name, "content_type": file_type, "data": file_b64, "size": len(file_content)}
+        payload["file"] = {
+            "filename": file_name, 
+            "content_type": file_type, 
+            "data": file_b64, 
+            "size": len(file_content)
+        }
         print(f"Datei: {file_name} ({len(file_content)} bytes) als Base64")
     headers = {'Content-Type': 'application/json'}
     try:
@@ -90,133 +114,269 @@ def post_to_n8n_analyze(url, file_tuple, tenant_id, uuid_str):
 def extract_metrics_from_excel(df):
     metrics = {}
     try:
-        if 'belegt' in df.columns: metrics['belegt'] = int(df['belegt'].sum())
-        if 'frei' in df.columns: metrics['frei'] = int(df['frei'].sum())
+        if 'belegt' in df.columns: 
+            metrics['belegt'] = int(df['belegt'].sum())
+        if 'frei' in df.columns: 
+            metrics['frei'] = int(df['frei'].sum())
         if 'belegt' in metrics and 'frei' in metrics:
             total = metrics['belegt'] + metrics['frei']
-            if total > 0: metrics['belegungsgrad'] = round((metrics['belegt'] / total) * 100, 1)
+            if total > 0: 
+                metrics['belegungsgrad'] = round((metrics['belegt'] / total) * 100, 1)
         for col in ['vertragsdauer_durchschnitt', 'reminder_automat', 'social_facebook', 'social_google']:
-            if col in df.columns: metrics[col] = float(df[col].mean())
+            if col in df.columns: 
+                metrics[col] = float(df[col].mean())
         herkunft_cols = [c for c in df.columns if 'herkunft' in c.lower()]
         if herkunft_cols:
             herkunft_counts = df[herkunft_cols[0]].value_counts().to_dict()
-            metrics['kundenherkunft'] = {'Online': herkunft_counts.get('Online', 0), 'Empfehlung': herkunft_counts.get('Empfehlung', 0), 'Vorbeikommen': herkunft_counts.get('Vorbeikommen', 0)}
+            metrics['kundenherkunft'] = {
+                'Online': herkunft_counts.get('Online', 0), 
+                'Empfehlung': herkunft_counts.get('Empfehlung', 0), 
+                'Vorbeikommen': herkunft_counts.get('Vorbeikommen', 0)
+            }
         status_cols = [c for c in df.columns if 'status' in c.lower()]
         if status_cols:
             status_counts = df[status_cols[0]].value_counts().to_dict()
-            metrics['zahlungsstatus'] = {'bezahlt': status_counts.get('bezahlt', 0), 'offen': status_counts.get('offen', 0), 'überfällig': status_counts.get('überfällig', 0)}
-    except Exception as e: st.warning(f"Excel-Warnung: {str(e)[:80]}")
+            metrics['zahlungsstatus'] = {
+                'bezahlt': status_counts.get('bezahlt', 0), 
+                'offen': status_counts.get('offen', 0), 
+                'überfällig': status_counts.get('überfällig', 0)
+            }
+    except Exception as e: 
+        st.warning(f"Excel-Warnung: {str(e)[:80]}")
     return metrics
 
 def merge_data(base_dict, new_dict):
     result = base_dict.copy() if base_dict else {}
     if new_dict:
         for key, value in new_dict.items():
-            if key not in ['kundenherkunft', 'zahlungsstatus', 'recommendations', 'customer_message']: result[key] = value
+            if key not in ['kundenherkunft', 'zahlungsstatus', 'recommendations', 'customer_message']: 
+                result[key] = value
         if 'kundenherkunft' in new_dict:
-            if 'kundenherkunft' not in result: result['kundenherkunft'] = {'Online': 0, 'Empfehlung': 0, 'Vorbeikommen': 0}
-            for k, v in new_dict['kundenherkunft'].items(): result['kundenherkunft'][k] = result['kundenherkunft'].get(k, 0) + v
+            if 'kundenherkunft' not in result: 
+                result['kundenherkunft'] = {'Online': 0, 'Empfehlung': 0, 'Vorbeikommen': 0}
+            for k, v in new_dict['kundenherkunft'].items(): 
+                result['kundenherkunft'][k] = result['kundenherkunft'].get(k, 0) + v
         if 'zahlungsstatus' in new_dict:
-            if 'zahlungsstatus' not in result: result['zahlungsstatus'] = {'bezahlt': 0, 'offen': 0, 'überfällig': 0}
-            for k, v in new_dict['zahlungsstatus'].items(): result['zahlungsstatus'][k] = result['zahlungsstatus'].get(k, 0) + v
+            if 'zahlungsstatus' not in result: 
+                result['zahlungsstatus'] = {'bezahlt': 0, 'offen': 0, 'überfällig': 0}
+            for k, v in new_dict['zahlungsstatus'].items(): 
+                result['zahlungsstatus'][k] = result['zahlungsstatus'].get(k, 0) + v
     return result
 
 def create_comparison_chart(before_data, after_data, metric_key, title):
-    if metric_key not in before_data or metric_key not in after_data: return None
-    before_val, after_val = before_data[metric_key], after_data[metric_key]
+    if metric_key not in before_data or metric_key not in after_data: 
+        return None
+    before_val = before_data[metric_key]
+    after_val = after_data[metric_key]
     delta = after_val - before_val
-    delta_color, delta_symbol = ('green', '+') if delta >= 0 else ('red', '')
-    fig = go.Figure(data=[go.Bar(name='Vorher', x=['Vorher'], y=[before_val], marker_color='lightblue'), go.Bar(name='Nachher', x=['Nachher'], y=[after_val], marker_color='lightgreen')])
-    fig.update_layout(title=f"{title}<br><span style='font-size:12px;color:{delta_color}'>{delta_symbol}{delta:.1f} Veränderung</span>", height=300, showlegend=True, yaxis_title=title)
+    delta_color = 'green' if delta >= 0 else 'red'
+    delta_symbol = '+' if delta >= 0 else ''
+    
+    fig = go.Figure(data=[
+        go.Bar(name='Vorher', x=['Vorher'], y=[before_val], marker_color='lightblue'),
+        go.Bar(name='Nachher', x=['Nachher'], y=[after_val], marker_color='lightgreen')
+    ])
+    fig.update_layout(
+        title=f"{title}<br><span style='font-size:12px;color:{delta_color}'>{delta_symbol}{delta:.1f} Veränderung</span>", 
+        height=300, 
+        showlegend=True, 
+        yaxis_title=title
+    )
     return fig
 
 def create_timeseries_chart(history_data, metric_key, title):
-    if not history_data or len(history_data) < 2: return None
-    dates, values = [], []
+    if not history_data or len(history_data) < 2: 
+        return None
+    dates = []
+    values = []
     for entry in sorted(history_data, key=lambda x: x.get('ts', '')):
         if isinstance(entry, dict) and 'data' in entry and metric_key in entry['data']:
-            dates.append(entry.get('ts', '')); values.append(entry['data'][metric_key])
-    if len(dates) < 2: return None
+            dates.append(entry.get('ts', ''))
+            values.append(entry['data'][metric_key])
+    if len(dates) < 2: 
+        return None
     fig = go.Figure(data=[go.Scatter(x=dates, y=values, mode='lines+markers', name=title)])
     fig.update_layout(title=f"Entwicklung: {title}", height=300, xaxis_title="Datum", yaxis_title=title)
     return fig
 
 def load_last_analysis():
-    if not st.session_state.logged_in: return False
-    tenant_id, n8n_url = st.session_state.current_tenant['tenant_id'], st.session_state.n8n_url
+    if not st.session_state.logged_in: 
+        return False
+    tenant_id = st.session_state.current_tenant['tenant_id']
+    n8n_url = st.session_state.n8n_url
+    
     if not n8n_url:
         st.warning("n8n URL nicht gesetzt. Verwende Standarddaten.")
-        st.session_state.current_data = DEFAULT_DATA.copy(); st.session_state.before_analysis = DEFAULT_DATA.copy()
+        st.session_state.current_data = DEFAULT_DATA.copy()
+        st.session_state.before_analysis = DEFAULT_DATA.copy()
         return True
+    
     with st.spinner("Lade letzte Analyse..."):
         status, message, response = post_to_n8n_get_last(n8n_url, tenant_id, str(uuid.uuid4()))
-        if status == 200 and response:
+        
+        # ROBUSTHEITSVERBESSERUNG: Prüfe, ob response existiert und ein Dictionary ist
+        if status == 200 and response and isinstance(response, dict):
             if response.get('current_analysis'):
                 current_analysis = response['current_analysis']
-                metrics_data = current_analysis['metrics'] if 'metrics' in current_analysis else current_analysis
+                metrics_data = current_analysis.get('metrics', current_analysis)
                 recommendations = current_analysis.get('recommendations', [])
                 customer_message = current_analysis.get('customer_message', 'Letzte Analyse')
-                loaded_data = {**metrics_data, 'recommendations': recommendations, 'customer_message': customer_message, 'analysis_date': current_analysis.get('analysis_date', datetime.now().isoformat()), 'tenant_id': tenant_id}
-                st.session_state.current_data = loaded_data; st.session_state.before_analysis = loaded_data.copy(); st.session_state.last_analysis_loaded = True
+                
+                loaded_data = {
+                    **metrics_data, 
+                    'recommendations': recommendations, 
+                    'customer_message': customer_message, 
+                    'analysis_date': current_analysis.get('analysis_date', datetime.now().isoformat()), 
+                    'tenant_id': tenant_id
+                }
+                
+                st.session_state.current_data = loaded_data
+                st.session_state.before_analysis = loaded_data.copy()
+                st.session_state.last_analysis_loaded = True
                 return True
             else:
-                st.session_state.current_data = DEFAULT_DATA.copy(); st.session_state.before_analysis = DEFAULT_DATA.copy()
+                st.session_state.current_data = DEFAULT_DATA.copy()
+                st.session_state.before_analysis = DEFAULT_DATA.copy()
                 st.info("Keine vorherige Analyse gefunden. Verwende Standarddaten.")
                 return True
         else:
-            st.error(f"Fehler beim Laden: {message}")
-            st.session_state.current_data = DEFAULT_DATA.copy(); st.session_state.before_analysis = DEFAULT_DATA.copy()
+            if status != 200:
+                st.error(f"Fehler beim Laden: {message}")
+            else:
+                st.info("Keine vorherige Analyse gefunden oder Antwort hat falsches Format.")
+            
+            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.before_analysis = DEFAULT_DATA.copy()
             return False
 
 def perform_analysis(uploaded_files):
     with st.spinner("KI analysiert Daten..."):
-        if not st.session_state.logged_in: st.error("Kein Tenant eingeloggt"); return
-        tenant_id, tenant_name = st.session_state.current_tenant['tenant_id'], st.session_state.current_tenant['name']
+        if not st.session_state.logged_in: 
+            st.error("Kein Tenant eingeloggt")
+            return
+        
+        tenant_id = st.session_state.current_tenant['tenant_id']
+        tenant_name = st.session_state.current_tenant['name']
         st.session_state.before_analysis = st.session_state.current_data.copy()
+        
         excel_merge = {}
         for excel_file in [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]:
-            try: df = pd.read_excel(excel_file); excel_metrics = extract_metrics_from_excel(df); excel_merge = merge_data(excel_merge, excel_metrics)
-            except Exception as e: st.warning(f"Excel-Fehler: {str(e)[:50]}")
+            try: 
+                df = pd.read_excel(excel_file)
+                excel_metrics = extract_metrics_from_excel(df)
+                excel_merge = merge_data(excel_merge, excel_metrics)
+            except Exception as e: 
+                st.warning(f"Excel-Fehler: {str(e)[:50]}")
+        
         n8n_url = st.session_state.n8n_url
-        if not n8n_url: st.error("Bitte n8n URL in der Sidebar eingeben"); return
+        if not n8n_url: 
+            st.error("Bitte n8n URL in der Sidebar eingeben")
+            return
+        
         main_file = uploaded_files[0]
-        status, message, response = post_to_n8n_analyze(n8n_url, (main_file.name, main_file.getvalue(), main_file.type), tenant_id, str(uuid.uuid4()))
+        status, message, response = post_to_n8n_analyze(
+            n8n_url, 
+            (main_file.name, main_file.getvalue(), main_file.type), 
+            tenant_id, 
+            str(uuid.uuid4())
+        )
+        
         if st.session_state.debug_mode:
             with st.expander("Debug: n8n Kommunikation", expanded=True):
-                st.write(f"Status: {status}"); st.write(f"Meldung: {message}"); st.write(f"Tenant-ID: {tenant_id}"); st.write(f"Tenant-Name: {tenant_name}")
-                if response: st.write("Rohantwort von n8n:"); st.json(response)
+                st.write(f"Status: {status}")
+                st.write(f"Meldung: {message}")
+                st.write(f"Tenant-ID: {tenant_id}")
+                st.write(f"Tenant-Name: {tenant_name}")
+                if response: 
+                    st.write("Rohantwort von n8n:")
+                    st.json(response)
+        
         if status != 200 or not response:
             st.error(f"n8n-Fehler: {message}")
-            if status == 400: st.info("Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
+            if status == 400: 
+                st.info("Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
+        
         processed_data = None
         if isinstance(response, dict) and 'current_analysis' in response:
-            current_analysis = response['current_analysis']; previous_analysis = response.get('previous_analysis')
-            metrics_data = current_analysis['metrics'] if 'metrics' in current_analysis else current_analysis
-            recommendations = current_analysis.get('recommendations', []); customer_message = current_analysis.get('customer_message', 'Analyse abgeschlossen')
-            processed_data = {'metrics': metrics_data, 'recommendations': recommendations, 'customer_message': customer_message, 'previous_analysis': previous_analysis}
-            if st.session_state.debug_mode: st.success("n8n-Format mit current_analysis erkannt!")
+            current_analysis = response['current_analysis']
+            previous_analysis = response.get('previous_analysis')
+            metrics_data = current_analysis.get('metrics', current_analysis)
+            recommendations = current_analysis.get('recommendations', [])
+            customer_message = current_analysis.get('customer_message', 'Analyse abgeschlossen')
+            
+            processed_data = {
+                'metrics': metrics_data, 
+                'recommendations': recommendations, 
+                'customer_message': customer_message, 
+                'previous_analysis': previous_analysis
+            }
+            if st.session_state.debug_mode: 
+                st.success("n8n-Format mit current_analysis erkannt!")
         elif isinstance(response, list) and len(response) > 0:
             first_item = response[0]
             if isinstance(first_item, dict) and 'metrics' in first_item:
-                processed_data = {'metrics': first_item.get('metrics', {}), 'recommendations': first_item.get('recommendations', []), 'customer_message': first_item.get('summary', 'Analyse abgeschlossen')}
+                processed_data = {
+                    'metrics': first_item.get('metrics', {}), 
+                    'recommendations': first_item.get('recommendations', []), 
+                    'customer_message': first_item.get('summary', 'Analyse abgeschlossen')
+                }
         elif isinstance(response, dict) and 'metrics' in response:
-            processed_data = {'metrics': response.get('metrics', {}), 'recommendations': response.get('recommendations', []), 'customer_message': response.get('customer_message', '')}
+            processed_data = {
+                'metrics': response.get('metrics', {}), 
+                'recommendations': response.get('recommendations', []), 
+                'customer_message': response.get('customer_message', '')
+            }
+        
         if processed_data:
-            metrics_data = processed_data.get('metrics', {}); recommendations = processed_data.get('recommendations', []); customer_message = processed_data.get('customer_message', '')
-            if not recommendations: recommendations = [f"Optimieren Sie Ihre Lagerauslastung für {tenant_name}", "Automatische Zahlungserinnerungen einrichten", "Google Business Profile pflegen"]
+            metrics_data = processed_data.get('metrics', {})
+            recommendations = processed_data.get('recommendations', [])
+            customer_message = processed_data.get('customer_message', '')
+            
+            if not recommendations: 
+                recommendations = [
+                    f"Optimieren Sie Ihre Lagerauslastung für {tenant_name}", 
+                    "Automatische Zahlungserinnerungen einrichten", 
+                    "Google Business Profile pflegen"
+                ]
+            
             merged_data = merge_data(metrics_data, excel_merge)
-            merged_data['recommendations'] = recommendations; merged_data['customer_message'] = customer_message; merged_data['tenant_id'] = tenant_id; merged_data['analysis_date'] = datetime.now().isoformat(); merged_data['files'] = [f.name for f in uploaded_files]
-            st.session_state.after_analysis = merged_data.copy(); st.session_state.current_data = merged_data.copy()
-            history_entry = {"ts": datetime.now().isoformat(), "data": merged_data.copy(), "files": [f.name for f in uploaded_files], "tenant_id": tenant_id, "tenant_name": tenant_name, "type": "analysis"}
+            merged_data['recommendations'] = recommendations
+            merged_data['customer_message'] = customer_message
+            merged_data['tenant_id'] = tenant_id
+            merged_data['analysis_date'] = datetime.now().isoformat()
+            merged_data['files'] = [f.name for f in uploaded_files]
+            
+            st.session_state.after_analysis = merged_data.copy()
+            st.session_state.current_data = merged_data.copy()
+            
+            history_entry = {
+                "ts": datetime.now().isoformat(), 
+                "data": merged_data.copy(), 
+                "files": [f.name for f in uploaded_files], 
+                "tenant_id": tenant_id, 
+                "tenant_name": tenant_name, 
+                "type": "analysis"
+            }
             st.session_state.analyses_history.append(history_entry)
-            if 'analyses_used' in st.session_state.current_tenant: st.session_state.current_tenant['analyses_used'] += 1
-            st.success(f"KI-Analyse erfolgreich für {tenant_name}!"); st.session_state.show_comparison = True; st.balloons(); time.sleep(2); st.rerun()
+            
+            if 'analyses_used' in st.session_state.current_tenant: 
+                st.session_state.current_tenant['analyses_used'] += 1
+            
+            st.success(f"KI-Analyse erfolgreich für {tenant_name}!")
+            st.session_state.show_comparison = True
+            st.balloons()
+            time.sleep(2)
+            st.rerun()
         else:
             st.error("n8n-Antwort hat unerwartetes Format")
             with st.expander("Problem-Details", expanded=True):
-                st.write("n8n sendet:"); st.json(response)
-                st.write("Streamlit erwartet EINES dieser Formate:"); st.code("""OPTION 1 (NEUES FORMAT): {"current_analysis": {"metrics": {...}, "recommendations": [...], "customer_message": "...", "analysis_date": "..."}, "previous_analysis": {...}}\nOPTION 2 (ALTES FORMAT): {"metrics": {...}, "recommendations": [...], "customer_message": "..."}\nOPTION 3 (ARRAY FORMAT): [{"metrics": {...}, "recommendations": [...], "summary": "..."}]""")
+                st.write("n8n sendet:")
+                st.json(response)
+                st.write("Streamlit erwartet EINES dieser Formate:")
+                st.code("""OPTION 1 (NEUES FORMAT): {"current_analysis": {"metrics": {...}, "recommendations": [...], "customer_message": "...", "analysis_date": "..."}, "previous_analysis": {...}}
+OPTION 2 (ALTES FORMAT): {"metrics": {...}, "recommendations": [...], "customer_message": "..."}
+OPTION 3 (ARRAY FORMAT): [{"metrics": {...}, "recommendations": [...], "summary": "..."}]""")
 
 # SEITENFUNKTIONEN
 def render_login_page():
@@ -227,11 +387,25 @@ def render_login_page():
     with col2:
         st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600", caption="Data-Driven Decisions for SelfStorage")
         st.info("**Beispiel-Vergleich:**\n**Bevor:**\n- Belegungsgrad: 75%\n- Ø Vertragsdauer: 7.2 Monate\n- Offene Zahlungen: 3\n**Nach KI-Analyse:**\n- Belegungsgrad: 82% (+7%)\n- Ø Vertragsdauer: 8.1 Monate (+0.9)\n- Offene Zahlungen: 1 (-2)")
-    st.divider(); st.subheader("Dashboard-Features")
+    
+    st.divider()
+    st.subheader("Dashboard-Features")
     col1, col2, col3 = st.columns(3)
-    with col1: st.markdown("**Vergleichsansicht**"); st.write("Side-by-Side Diagramme"); st.write("Delta-Berechnungen"); st.write("Prozentuale Veränderungen")
-    with col2: st.markdown("**History-Tracking**"); st.write("Alle Analysen speichern"); st.write("Zeitreihen-Diagramme"); st.write("Export-Funktion")
-    with col3: st.markdown("**KI-Integration**"); st.write("Automatische Empfehlungen"); st.write("Datenbank-Anbindung"); st.write("Echtzeit-Updates")
+    with col1: 
+        st.markdown("**Vergleichsansicht**")
+        st.write("Side-by-Side Diagramme")
+        st.write("Delta-Berechnungen")
+        st.write("Prozentuale Veränderungen")
+    with col2: 
+        st.markdown("**History-Tracking**")
+        st.write("Alle Analysen speichern")
+        st.write("Zeitreihen-Diagramme")
+        st.write("Export-Funktion")
+    with col3: 
+        st.markdown("**KI-Integration**")
+        st.write("Automatische Empfehlungen")
+        st.write("Datenbank-Anbindung")
+        st.write("Echtzeit-Updates")
 
 def render_overview():
     tenant = st.session_state.current_tenant
@@ -252,11 +426,21 @@ def render_overview():
         st.info(f"Letzte Analyse: {display_date}")
     
     st.header("Neue Analyse durchführen")
-    uploaded_files = st.file_uploader("Dateien hochladen (Excel/CSV)", type=["xlsx", "xls", "csv"], accept_multiple_files=True, key="file_uploader")
+    uploaded_files = st.file_uploader(
+        "Dateien hochladen (Excel/CSV)", 
+        type=["xlsx", "xls", "csv"], 
+        accept_multiple_files=True, 
+        key="file_uploader"
+    )
     
     col1, col2 = st.columns(2)
     with col1: 
-        analyze_btn = st.button("KI-Analyse starten", type="primary", use_container_width=True, disabled=not uploaded_files)
+        analyze_btn = st.button(
+            "KI-Analyse starten", 
+            type="primary", 
+            use_container_width=True, 
+            disabled=not uploaded_files
+        )
     with col2: 
         if st.button("Letzte Analyse neu laden", use_container_width=True): 
             load_last_analysis()
@@ -276,15 +460,18 @@ def render_overview():
         st.subheader("Key Performance Indicators")
         col1, col2, col3, col4 = st.columns(4)
         with col1: 
-            before_val, after_val = before.get('belegungsgrad', 0), after.get('belegungsgrad', 0)
+            before_val = before.get('belegungsgrad', 0)
+            after_val = after.get('belegungsgrad', 0)
             delta = after_val - before_val
             st.metric("Belegungsgrad", f"{after_val}%", f"{delta:+.1f}%")
         with col2: 
-            before_val, after_val = before.get('vertragsdauer_durchschnitt', 0), after.get('vertragsdauer_durchschnitt', 0)
+            before_val = before.get('vertragsdauer_durchschnitt', 0)
+            after_val = after.get('vertragsdauer_durchschnitt', 0)
             delta = after_val - before_val
             st.metric("Ø Vertragsdauer", f"{after_val:.1f} Monate", f"{delta:+.1f}")
         with col3: 
-            before_val, after_val = before.get('belegt', 0), after.get('belegt', 0)
+            before_val = before.get('belegt', 0)
+            after_val = after.get('belegt', 0)
             delta = after_val - before_val
             st.metric("Belegte Einheiten", after_val, f"{delta:+d}")
         with col4: 
@@ -300,9 +487,28 @@ def render_overview():
             if fig: 
                 st.plotly_chart(fig, use_container_width=True)
             if 'kundenherkunft' in before and 'kundenherkunft' in after:
-                fig = make_subplots(rows=1, cols=2, subplot_titles=('Vorher', 'Nachher'), specs=[[{'type':'domain'}, {'type':'domain'}]])
-                fig.add_trace(go.Pie(labels=list(before['kundenherkunft'].keys()), values=list(before['kundenherkunft'].values()), name="Vorher"), 1, 1)
-                fig.add_trace(go.Pie(labels=list(after['kundenherkunft'].keys()), values=list(after['kundenherkunft'].values()), name="Nachher"), 1, 2)
+                fig = make_subplots(
+                    rows=1, 
+                    cols=2, 
+                    subplot_titles=('Vorher', 'Nachher'), 
+                    specs=[[{'type':'domain'}, {'type':'domain'}]]
+                )
+                fig.add_trace(
+                    go.Pie(
+                        labels=list(before['kundenherkunft'].keys()), 
+                        values=list(before['kundenherkunft'].values()), 
+                        name="Vorher"
+                    ), 
+                    1, 1
+                )
+                fig.add_trace(
+                    go.Pie(
+                        labels=list(after['kundenherkunft'].keys()), 
+                        values=list(after['kundenherkunft'].values()), 
+                        name="Nachher"
+                    ), 
+                    1, 2
+                )
                 fig.update_layout(height=300, title_text="Kundenherkunft")
                 st.plotly_chart(fig, use_container_width=True)
         
@@ -311,7 +517,10 @@ def render_overview():
                 categories = list(before['zahlungsstatus'].keys())
                 before_vals = [before['zahlungsstatus'][k] for k in categories]
                 after_vals = [after['zahlungsstatus'][k] for k in categories]
-                fig = go.Figure(data=[go.Bar(name='Vorher', x=categories, y=before_vals), go.Bar(name='Nachher', x=categories, y=after_vals)])
+                fig = go.Figure(data=[
+                    go.Bar(name='Vorher', x=categories, y=before_vals),
+                    go.Bar(name='Nachher', x=categories, y=after_vals)
+                ])
                 fig.update_layout(title='Zahlungsstatus Vergleich', height=300, barmode='group')
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -347,20 +556,30 @@ def render_overview():
         with col3: 
             st.metric("Belegte Einheiten", data.get('belegt', 0))
         with col4: 
-            facebook, google = data.get('social_facebook', 0), data.get('social_google', 0)
+            facebook = data.get('social_facebook', 0)
+            google = data.get('social_google', 0)
             st.metric("Social Engagement", facebook + google)
         
         st.subheader("Aktuelle Visualisierungen")
         col1, col2 = st.columns(2)
         with col1:
             belegung = data.get('belegungsgrad', 0)
-            fig = go.Figure(data=[go.Pie(labels=["Belegt", "Frei"], values=[belegung, max(100 - belegung, 0)], hole=0.6)])
+            fig = go.Figure(data=[
+                go.Pie(
+                    labels=["Belegt", "Frei"], 
+                    values=[belegung, max(100 - belegung, 0)], 
+                    hole=0.6
+                )
+            ])
             fig.update_layout(title="Belegungsgrad", height=300)
             st.plotly_chart(fig, use_container_width=True)
         
         with col2:
             if 'kundenherkunft' in data:
-                df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
+                df = pd.DataFrame({
+                    "Kanal": list(data['kundenherkunft'].keys()), 
+                    "Anzahl": list(data['kundenherkunft'].values())
+                })
                 fig = px.pie(df, values='Anzahl', names='Kanal')
                 fig.update_layout(title="Kundenherkunft", height=300)
                 st.plotly_chart(fig, use_container_width=True)
@@ -415,13 +634,19 @@ def render_customers():
         with col1: 
             st.subheader("Vorher")
             if 'kundenherkunft' in before: 
-                df_before = pd.DataFrame({"Kanal": list(before['kundenherkunft'].keys()), "Anzahl": list(before['kundenherkunft'].values())})
+                df_before = pd.DataFrame({
+                    "Kanal": list(before['kundenherkunft'].keys()), 
+                    "Anzahl": list(before['kundenherkunft'].values())
+                })
                 st.dataframe(df_before, use_container_width=True)
         
         with col2: 
             st.subheader("Nachher")
             if 'kundenherkunft' in after: 
-                df_after = pd.DataFrame({"Kanal": list(after['kundenherkunft'].keys()), "Anzahl": list(after['kundenherkunft'].values())})
+                df_after = pd.DataFrame({
+                    "Kanal": list(after['kundenherkunft'].keys()), 
+                    "Anzahl": list(after['kundenherkunft'].values())
+                })
                 st.dataframe(df_after, use_container_width=True)
         
         if 'kundenherkunft' in before and 'kundenherkunft' in after:
@@ -446,7 +671,10 @@ def render_customers():
         if herkunft: 
             col1, col2 = st.columns(2)
             with col1: 
-                df = pd.DataFrame({"Kanal": list(herkunft.keys()), "Anzahl": list(herkunft.values())})
+                df = pd.DataFrame({
+                    "Kanal": list(herkunft.keys()), 
+                    "Anzahl": list(herkunft.values())
+                })
                 st.dataframe(df, use_container_width=True)
             with col2: 
                 fig = px.pie(df, values='Anzahl', names='Kanal')
@@ -455,18 +683,52 @@ def render_customers():
             st.info("Keine Kundendaten verfügbar. Führen Sie eine Analyse durch.")
 
 def render_capacity():
-    st.title("Kapazitätsmanagement"); data = st.session_state.current_data
+    st.title("Kapazitätsmanagement")
+    data = st.session_state.current_data
+    
     if st.session_state.get('show_comparison') and st.session_state.before_analysis:
-        before, after = st.session_state.before_analysis, st.session_state.after_analysis; st.header("Kapazitätsentwicklung"); col1, col2 = st.columns(2)
-        with col1: st.subheader("Vorher"); st.metric("Belegte Einheiten", before.get('belegt', 0)); st.metric("Freie Einheiten", before.get('frei', 0)); st.metric("Belegungsgrad", f"{before.get('belegungsgrad', 0)}%")
-        with col2: st.subheader("Nachher"); st.metric("Belegte Einheiten", after.get('belegt', 0)); st.metric("Freie Einheiten", after.get('frei', 0)); st.metric("Belegungsgrad", f"{after.get('belegungsgrad', 0)}%")
-        st.subheader("Kapazitätsverteilung"); categories = ['Belegt', 'Frei']; before_vals = [before.get('belegt', 0), before.get('frei', 0)]; after_vals = [after.get('belegt', 0), after.get('frei', 0)]
-        fig = go.Figure(data=[go.Bar(name='Vorher', x=categories, y=before_vals), go.Bar(name='Nachher', x=categories, y=after_vals)])
-        fig.update_layout(title='Kapazitätsverteilung Vergleich', barmode='group', height=400); st.plotly_chart(fig, use_container_width=True)
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        st.header("Kapazitätsentwicklung")
+        
+        col1, col2 = st.columns(2)
+        with col1: 
+            st.subheader("Vorher")
+            st.metric("Belegte Einheiten", before.get('belegt', 0))
+            st.metric("Freie Einheiten", before.get('frei', 0))
+            st.metric("Belegungsgrad", f"{before.get('belegungsgrad', 0)}%")
+        
+        with col2: 
+            st.subheader("Nachher")
+            st.metric("Belegte Einheiten", after.get('belegt', 0))
+            st.metric("Freie Einheiten", after.get('frei', 0))
+            st.metric("Belegungsgrad", f"{after.get('belegungsgrad', 0)}%")
+        
+        st.subheader("Kapazitätsverteilung")
+        categories = ['Belegt', 'Frei']
+        before_vals = [before.get('belegt', 0), before.get('frei', 0)]
+        after_vals = [after.get('belegt', 0), after.get('frei', 0)]
+        
+        fig = go.Figure(data=[
+            go.Bar(name='Vorher', x=categories, y=before_vals),
+            go.Bar(name='Nachher', x=categories, y=after_vals)
+        ])
+        fig.update_layout(title='Kapazitätsverteilung Vergleich', barmode='group', height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
     else:
         col1, col2 = st.columns(2)
-        with col1: st.metric("Belegte Einheiten", data.get("belegt", 0)); st.metric("Freie Einheiten", data.get("frei", 0)); st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
-        with col2: fig = go.Figure(data=[go.Bar(x=["Belegt", "Frei"], y=[data.get("belegt", 0), data.get("frei", 0)])]); fig.update_layout(title="Kapazitätsverteilung", height=300); st.plotly_chart(fig, use_container_width=True)
+        with col1: 
+            st.metric("Belegte Einheiten", data.get("belegt", 0))
+            st.metric("Freie Einheiten", data.get("frei", 0))
+            st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
+        
+        with col2: 
+            fig = go.Figure(data=[
+                go.Bar(x=["Belegt", "Frei"], y=[data.get("belegt", 0), data.get("frei", 0)])
+            ])
+            fig.update_layout(title="Kapazitätsverteilung", height=300)
+            st.plotly_chart(fig, use_container_width=True)
 
 def render_finance():
     st.title("Finanzübersicht")
@@ -481,13 +743,19 @@ def render_finance():
         with col1: 
             st.subheader("Vorher")
             if 'zahlungsstatus' in before: 
-                df_before = pd.DataFrame({"Status": list(before['zahlungsstatus'].keys()), "Anzahl": list(before['zahlungsstatus'].values())})
+                df_before = pd.DataFrame({
+                    "Status": list(before['zahlungsstatus'].keys()), 
+                    "Anzahl": list(before['zahlungsstatus'].values())
+                })
                 st.dataframe(df_before, use_container_width=True)
         
         with col2: 
             st.subheader("Nachher")
             if 'zahlungsstatus' in after: 
-                df_after = pd.DataFrame({"Status": list(after['zahlungsstatus'].keys()), "Anzahl": list(after['zahlungsstatus'].values())})
+                df_after = pd.DataFrame({
+                    "Status": list(after['zahlungsstatus'].keys()), 
+                    "Anzahl": list(after['zahlungsstatus'].values())
+                })
                 st.dataframe(df_after, use_container_width=True)
         
         if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
@@ -513,7 +781,10 @@ def render_finance():
         if status: 
             col1, col2 = st.columns(2)
             with col1: 
-                df = pd.DataFrame({"Status": list(status.keys()), "Anzahl": list(status.values())})
+                df = pd.DataFrame({
+                    "Status": list(status.keys()), 
+                    "Anzahl": list(status.values())
+                })
                 st.dataframe(df, use_container_width=True)
             with col2: 
                 total = sum(status.values())
@@ -524,6 +795,7 @@ def render_finance():
                 st.plotly_chart(fig, use_container_width=True)
         else: 
             st.info("Keine Finanzdaten verfügbar. Führen Sie eine Analyse durch.")
+
 def render_system():
     st.title("System & Export")
     data = st.session_state.current_data
@@ -641,7 +913,6 @@ def render_system():
         st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
     with col4: 
         st.metric("n8n URL", "Gesetzt" if st.session_state.n8n_url else "Fehlt")
-
 
 # HAUPTAPP
 def main():
@@ -772,7 +1043,6 @@ def main():
             render_finance()
         elif page == "System": 
             render_system()
-
 
 if __name__ == "__main__": 
     main()
