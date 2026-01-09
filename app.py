@@ -214,7 +214,7 @@ def load_last_analysis():
     with st.spinner("Lade letzte Analyse..."):
         status, message, response = post_to_n8n_get_last(n8n_url, tenant_id, str(uuid.uuid4()))
         
-        # ROBUSTHEITSVERBESSERUNG: Prüfe, ob response existiert und ein Dictionary ist
+        # VERBESSERTE FEHLERBEHANDLUNG
         if status == 200 and response and isinstance(response, dict):
             if response.get('current_analysis'):
                 current_analysis = response['current_analysis']
@@ -297,36 +297,66 @@ def perform_analysis(uploaded_files):
                 st.info("Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
         
+        # VERBESSERTE ANTWORTVERARBEITUNG
         processed_data = None
-        if isinstance(response, dict) and 'current_analysis' in response:
-            current_analysis = response['current_analysis']
-            previous_analysis = response.get('previous_analysis')
-            metrics_data = current_analysis.get('metrics', current_analysis)
-            recommendations = current_analysis.get('recommendations', [])
-            customer_message = current_analysis.get('customer_message', 'Analyse abgeschlossen')
+        
+        # Prüfe ob response ein Array mit leeren Objekten ist
+        if isinstance(response, list):
+            # Filtere leere Objekte heraus
+            non_empty_items = [item for item in response if item]
+            if len(non_empty_items) == 0:
+                st.error("n8n hat eine leere Antwort gesendet. Der Workflow könnte fehlerhaft sein.")
+                st.info("Bitte überprüfen Sie den n8n-Workflow und stellen Sie sicher, dass alle Nodes korrekt konfiguriert sind.")
+                return
             
-            processed_data = {
-                'metrics': metrics_data, 
-                'recommendations': recommendations, 
-                'customer_message': customer_message, 
-                'previous_analysis': previous_analysis
-            }
-            if st.session_state.debug_mode: 
-                st.success("n8n-Format mit current_analysis erkannt!")
-        elif isinstance(response, list) and len(response) > 0:
-            first_item = response[0]
-            if isinstance(first_item, dict) and 'metrics' in first_item:
+            # Verwende das erste nicht-leere Item
+            response = non_empty_items[0]
+        
+        # VERARBEITUNG DER KORREKTEN ANTWORTFORMATE
+        if isinstance(response, dict):
+            # Format 1: current_analysis Format
+            if 'current_analysis' in response:
+                current_analysis = response['current_analysis']
+                previous_analysis = response.get('previous_analysis')
+                metrics_data = current_analysis.get('metrics', current_analysis)
+                recommendations = current_analysis.get('recommendations', [])
+                customer_message = current_analysis.get('customer_message', 'Analyse abgeschlossen')
+                
                 processed_data = {
-                    'metrics': first_item.get('metrics', {}), 
-                    'recommendations': first_item.get('recommendations', []), 
-                    'customer_message': first_item.get('summary', 'Analyse abgeschlossen')
+                    'metrics': metrics_data, 
+                    'recommendations': recommendations, 
+                    'customer_message': customer_message, 
+                    'previous_analysis': previous_analysis
                 }
-        elif isinstance(response, dict) and 'metrics' in response:
-            processed_data = {
-                'metrics': response.get('metrics', {}), 
-                'recommendations': response.get('recommendations', []), 
-                'customer_message': response.get('customer_message', '')
-            }
+                if st.session_state.debug_mode: 
+                    st.success("n8n-Format mit current_analysis erkannt!")
+            
+            # Format 2: metrics direkt
+            elif 'metrics' in response:
+                processed_data = {
+                    'metrics': response.get('metrics', {}), 
+                    'recommendations': response.get('recommendations', []), 
+                    'customer_message': response.get('customer_message', '')
+                }
+                if st.session_state.debug_mode: 
+                    st.success("n8n-Format mit metrics erkannt!")
+            
+            # Format 3: direkte Business-Daten
+            elif any(key in response for key in ['belegt', 'frei', 'belegungsgrad', 'vertragsdauer_durchschnitt']):
+                metrics_data = {}
+                for key in ['belegt', 'frei', 'vertragsdauer_durchschnitt', 'reminder_automat', 
+                          'social_facebook', 'social_google', 'belegungsgrad', 'kundenherkunft', 
+                          'zahlungsstatus', 'neukunden_labels', 'neukunden_monat']:
+                    if key in response:
+                        metrics_data[key] = response[key]
+                
+                processed_data = {
+                    'metrics': metrics_data, 
+                    'recommendations': response.get('recommendations', []), 
+                    'customer_message': response.get('customer_message', response.get('summary', 'Analyse abgeschlossen'))
+                }
+                if st.session_state.debug_mode: 
+                    st.success("Direkte Business-Daten erkannt!")
         
         if processed_data:
             metrics_data = processed_data.get('metrics', {})
@@ -376,7 +406,16 @@ def perform_analysis(uploaded_files):
                 st.write("Streamlit erwartet EINES dieser Formate:")
                 st.code("""OPTION 1 (NEUES FORMAT): {"current_analysis": {"metrics": {...}, "recommendations": [...], "customer_message": "...", "analysis_date": "..."}, "previous_analysis": {...}}
 OPTION 2 (ALTES FORMAT): {"metrics": {...}, "recommendations": [...], "customer_message": "..."}
-OPTION 3 (ARRAY FORMAT): [{"metrics": {...}, "recommendations": [...], "summary": "..."}]""")
+OPTION 3 (DIREKTE DATEN): {"belegt": 18, "frei": 6, "vertragsdauer_durchschnitt": 7.2, ...}
+OPTION 4 (ARRAY MIT DATEN): [{"metrics": {...}, "recommendations": [...], "summary": "..."}]""")
+                
+                # Debug-Informationen
+                st.write("Debug-Informationen:")
+                st.write(f"Response-Typ: {type(response)}")
+                if isinstance(response, list):
+                    st.write(f"Array-Länge: {len(response)}")
+                    for i, item in enumerate(response):
+                        st.write(f"Item {i}: {type(item)} - {item}")
 
 # SEITENFUNKTIONEN
 def render_login_page():
