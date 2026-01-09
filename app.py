@@ -403,25 +403,56 @@ def render_overview():
         st.info("Noch keine Analysen durchgeführt. Starten Sie Ihre erste KI-Analyse!")
 
 def render_customers():
-    st.title("Kundenanalyse"); data = st.session_state.current_data
+    st.title("Kundenanalyse")
+    data = st.session_state.current_data
+    
     if st.session_state.get('show_comparison') and st.session_state.before_analysis:
-        before, after = st.session_state.before_analysis, st.session_state.after_analysis; st.header("Kundenentwicklung"); col1, col2 = st.columns(2)
-        with col1: st.subheader("Vorher")
-        if 'kundenherkunft' in before: df_before = pd.DataFrame({"Kanal": list(before['kundenherkunft'].keys()), "Anzahl": list(before['kundenherkunft'].values())}); st.dataframe(df_before, use_container_width=True)
-        with col2: st.subheader("Nachher")
-        if 'kundenherkunft' in after: df_after = pd.DataFrame({"Kanal": list(after['kundenherkunft'].keys()), "Anzahl": list(after['kundenherkunft'].values())}); st.dataframe(df_after, use_container_width=True)
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        st.header("Kundenentwicklung")
+        
+        col1, col2 = st.columns(2)
+        with col1: 
+            st.subheader("Vorher")
+            if 'kundenherkunft' in before: 
+                df_before = pd.DataFrame({"Kanal": list(before['kundenherkunft'].keys()), "Anzahl": list(before['kundenherkunft'].values())})
+                st.dataframe(df_before, use_container_width=True)
+        
+        with col2: 
+            st.subheader("Nachher")
+            if 'kundenherkunft' in after: 
+                df_after = pd.DataFrame({"Kanal": list(after['kundenherkunft'].keys()), "Anzahl": list(after['kundenherkunft'].values())})
+                st.dataframe(df_after, use_container_width=True)
+        
         if 'kundenherkunft' in before and 'kundenherkunft' in after:
-            st.subheader("Veränderungen"); changes = []
+            st.subheader("Veränderungen")
+            changes = []
             for key in before['kundenherkunft'].keys():
-                before_val, after_val = before['kundenherkunft'].get(key, 0), after['kundenherkunft'].get(key, 0); change = after_val - before_val; percent = (change / before_val * 100) if before_val > 0 else 0
-                changes.append({'Kanal': key, 'Vorher': before_val, 'Nachher': after_val, 'Δ Absolut': change, 'Δ %': f"{percent:+.1f}%" if before_val > 0 else "Neu"})
+                before_val = before['kundenherkunft'].get(key, 0)
+                after_val = after['kundenherkunft'].get(key, 0)
+                change = after_val - before_val
+                percent = (change / before_val * 100) if before_val > 0 else 0
+                changes.append({
+                    'Kanal': key, 
+                    'Vorher': before_val, 
+                    'Nachher': after_val, 
+                    'Δ Absolut': change, 
+                    'Δ %': f"{percent:+.1f}%" if before_val > 0 else "Neu"
+                })
             st.dataframe(pd.DataFrame(changes), use_container_width=True)
+    
     else:
         herkunft = data.get("kundenherkunft", {})
-        if herkunft: col1, col2 = st.columns(2)
-        with col1: df = pd.DataFrame({"Kanal": list(herkunft.keys()), "Anzahl": list(herkunft.values())}); st.dataframe(df, use_container_width=True)
-        with col2: fig = px.pie(df, values='Anzahl', names='Kanal'); st.plotly_chart(fig, use_container_width=True)
-        else: st.info("Keine Kundendaten verfügbar. Führen Sie eine Analyse durch.")
+        if herkunft: 
+            col1, col2 = st.columns(2)
+            with col1: 
+                df = pd.DataFrame({"Kanal": list(herkunft.keys()), "Anzahl": list(herkunft.values())})
+                st.dataframe(df, use_container_width=True)
+            with col2: 
+                fig = px.pie(df, values='Anzahl', names='Kanal')
+                st.plotly_chart(fig, use_container_width=True)
+        else: 
+            st.info("Keine Kundendaten verfügbar. Führen Sie eine Analyse durch.")
 
 def render_capacity():
     st.title("Kapazitätsmanagement"); data = st.session_state.current_data
