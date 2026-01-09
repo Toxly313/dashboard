@@ -273,10 +273,12 @@ def render_overview():
                 fig = go.Figure(data=[go.Bar(name='Facebook Vorher', x=['Facebook'], y=[before['social_facebook']]), go.Bar(name='Facebook Nachher', x=['Facebook'], y=[after['social_facebook']]), go.Bar(name='Google Vorher', x=['Google'], y=[before['social_google']]), go.Bar(name='Google Nachher', x=['Google'], y=[after['social_google']])])
                 fig.update_layout(title='Social Media Vergleich', height=300, barmode='group'); st.plotly_chart(fig, use_container_width=True)
         recommendations = after.get('recommendations', [])
-        if recommendations: st.subheader("KI-Empfehlungen"); [st.markdown(f"**{i}.** {rec}") for i, rec in enumerate(recommendations[:5], 1)]
-            if after.get('customer_message'): 
-        with st.expander("Zusammenfassung"): 
-            st.info(after['customer_message'])
+        if recommendations: 
+            st.subheader("KI-Empfehlungen")
+            [st.markdown(f"**{i}.** {rec}") for i, rec in enumerate(recommendations[:5], 1)]
+        if after.get('customer_message'): 
+            with st.expander("Zusammenfassung"): 
+                st.info(after['customer_message'])
     else:
         data = st.session_state.current_data; st.subheader("Aktuelle KPIs"); col1, col2, col3, col4 = st.columns(4)
         with col1: st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
