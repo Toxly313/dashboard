@@ -234,81 +234,173 @@ def render_login_page():
     with col3: st.markdown("**KI-Integration**"); st.write("Automatische Empfehlungen"); st.write("Datenbank-Anbindung"); st.write("Echtzeit-Updates")
 
 def render_overview():
-    tenant = st.session_state.current_tenant; st.title(f"Dashboard - {tenant['name']}")
+    tenant = st.session_state.current_tenant
+    st.title(f"Dashboard - {tenant['name']}")
+    
     col1, col2, col3, col4 = st.columns(4)
-    with col1: st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
-    with col2: st.info(f"Plan: {tenant['plan'].upper()}")
-    with col3: used = tenant.get('analyses_used', 0); limit = tenant.get('analyses_limit', '∞'); st.info(f"Analysen: {used}/{limit}")
-    with col4: current_date = st.session_state.current_data.get('analysis_date', ''); display_date = current_date[:10] if current_date else "Keine"; st.info(f"Letzte Analyse: {display_date}")
+    with col1: 
+        st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
+    with col2: 
+        st.info(f"Plan: {tenant['plan'].upper()}")
+    with col3: 
+        used = tenant.get('analyses_used', 0)
+        limit = tenant.get('analyses_limit', '∞')
+        st.info(f"Analysen: {used}/{limit}")
+    with col4: 
+        current_date = st.session_state.current_data.get('analysis_date', '')
+        display_date = current_date[:10] if current_date else "Keine"
+        st.info(f"Letzte Analyse: {display_date}")
+    
     st.header("Neue Analyse durchführen")
     uploaded_files = st.file_uploader("Dateien hochladen (Excel/CSV)", type=["xlsx", "xls", "csv"], accept_multiple_files=True, key="file_uploader")
+    
     col1, col2 = st.columns(2)
-    with col1: analyze_btn = st.button("KI-Analyse starten", type="primary", use_container_width=True, disabled=not uploaded_files)
+    with col1: 
+        analyze_btn = st.button("KI-Analyse starten", type="primary", use_container_width=True, disabled=not uploaded_files)
     with col2: 
-        if st.button("Letzte Analyse neu laden", use_container_width=True): load_last_analysis(); st.session_state.show_comparison = False; st.success("Letzte Analyse neu geladen!"); time.sleep(1); st.rerun()
-    if analyze_btn and uploaded_files: perform_analysis(uploaded_files)
+        if st.button("Letzte Analyse neu laden", use_container_width=True): 
+            load_last_analysis()
+            st.session_state.show_comparison = False
+            st.success("Letzte Analyse neu geladen!")
+            time.sleep(1)
+            st.rerun()
+    
+    if analyze_btn and uploaded_files: 
+        perform_analysis(uploaded_files)
+    
     if st.session_state.get('show_comparison') and st.session_state.before_analysis and st.session_state.after_analysis:
-        st.header("Vergleich: Vorher vs. Nachher"); before = st.session_state.before_analysis; after = st.session_state.after_analysis
-        st.subheader("Key Performance Indicators"); col1, col2, col3, col4 = st.columns(4)
-        with col1: before_val, after_val = before.get('belegungsgrad', 0), after.get('belegungsgrad', 0); delta = after_val - before_val; st.metric("Belegungsgrad", f"{after_val}%", f"{delta:+.1f}%")
-        with col2: before_val, after_val = before.get('vertragsdauer_durchschnitt', 0), after.get('vertragsdauer_durchschnitt', 0); delta = after_val - before_val; st.metric("Ø Vertragsdauer", f"{after_val:.1f} Monate", f"{delta:+.1f}")
-        with col3: before_val, after_val = before.get('belegt', 0), after.get('belegt', 0); delta = after_val - before_val; st.metric("Belegte Einheiten", after_val, f"{delta:+d}")
-        with col4: before_social = before.get('social_facebook', 0) + before.get('social_google', 0); after_social = after.get('social_facebook', 0) + after.get('social_google', 0); delta = after_social - before_social; st.metric("Social Engagement", after_social, f"{delta:+d}")
-        st.subheader("Detail-Vergleich"); col1, col2 = st.columns(2)
+        st.header("Vergleich: Vorher vs. Nachher")
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        
+        st.subheader("Key Performance Indicators")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1: 
+            before_val, after_val = before.get('belegungsgrad', 0), after.get('belegungsgrad', 0)
+            delta = after_val - before_val
+            st.metric("Belegungsgrad", f"{after_val}%", f"{delta:+.1f}%")
+        with col2: 
+            before_val, after_val = before.get('vertragsdauer_durchschnitt', 0), after.get('vertragsdauer_durchschnitt', 0)
+            delta = after_val - before_val
+            st.metric("Ø Vertragsdauer", f"{after_val:.1f} Monate", f"{delta:+.1f}")
+        with col3: 
+            before_val, after_val = before.get('belegt', 0), after.get('belegt', 0)
+            delta = after_val - before_val
+            st.metric("Belegte Einheiten", after_val, f"{delta:+d}")
+        with col4: 
+            before_social = before.get('social_facebook', 0) + before.get('social_google', 0)
+            after_social = after.get('social_facebook', 0) + after.get('social_google', 0)
+            delta = after_social - before_social
+            st.metric("Social Engagement", after_social, f"{delta:+d}")
+        
+        st.subheader("Detail-Vergleich")
+        col1, col2 = st.columns(2)
         with col1:
             fig = create_comparison_chart(before, after, 'belegungsgrad', 'Belegungsgrad (%)')
-            if fig: st.plotly_chart(fig, use_container_width=True)
+            if fig: 
+                st.plotly_chart(fig, use_container_width=True)
             if 'kundenherkunft' in before and 'kundenherkunft' in after:
                 fig = make_subplots(rows=1, cols=2, subplot_titles=('Vorher', 'Nachher'), specs=[[{'type':'domain'}, {'type':'domain'}]])
                 fig.add_trace(go.Pie(labels=list(before['kundenherkunft'].keys()), values=list(before['kundenherkunft'].values()), name="Vorher"), 1, 1)
                 fig.add_trace(go.Pie(labels=list(after['kundenherkunft'].keys()), values=list(after['kundenherkunft'].values()), name="Nachher"), 1, 2)
-                fig.update_layout(height=300, title_text="Kundenherkunft"); st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(height=300, title_text="Kundenherkunft")
+                st.plotly_chart(fig, use_container_width=True)
+        
         with col2:
             if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
-                categories = list(before['zahlungsstatus'].keys()); before_vals = [before['zahlungsstatus'][k] for k in categories]; after_vals = [after['zahlungsstatus'][k] for k in categories]
+                categories = list(before['zahlungsstatus'].keys())
+                before_vals = [before['zahlungsstatus'][k] for k in categories]
+                after_vals = [after['zahlungsstatus'][k] for k in categories]
                 fig = go.Figure(data=[go.Bar(name='Vorher', x=categories, y=before_vals), go.Bar(name='Nachher', x=categories, y=after_vals)])
-                fig.update_layout(title='Zahlungsstatus Vergleich', height=300, barmode='group'); st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(title='Zahlungsstatus Vergleich', height=300, barmode='group')
+                st.plotly_chart(fig, use_container_width=True)
+            
             social_metrics = ['social_facebook', 'social_google']
             if all(m in before and m in after for m in social_metrics):
-                fig = go.Figure(data=[go.Bar(name='Facebook Vorher', x=['Facebook'], y=[before['social_facebook']]), go.Bar(name='Facebook Nachher', x=['Facebook'], y=[after['social_facebook']]), go.Bar(name='Google Vorher', x=['Google'], y=[before['social_google']]), go.Bar(name='Google Nachher', x=['Google'], y=[after['social_google']])])
-                fig.update_layout(title='Social Media Vergleich', height=300, barmode='group'); st.plotly_chart(fig, use_container_width=True)
+                fig = go.Figure(data=[
+                    go.Bar(name='Facebook Vorher', x=['Facebook'], y=[before['social_facebook']]),
+                    go.Bar(name='Facebook Nachher', x=['Facebook'], y=[after['social_facebook']]),
+                    go.Bar(name='Google Vorher', x=['Google'], y=[before['social_google']]),
+                    go.Bar(name='Google Nachher', x=['Google'], y=[after['social_google']])
+                ])
+                fig.update_layout(title='Social Media Vergleich', height=300, barmode='group')
+                st.plotly_chart(fig, use_container_width=True)
+        
         recommendations = after.get('recommendations', [])
         if recommendations: 
             st.subheader("KI-Empfehlungen")
-            [st.markdown(f"**{i}.** {rec}") for i, rec in enumerate(recommendations[:5], 1)]
+            for i, rec in enumerate(recommendations[:5], 1):
+                st.markdown(f"**{i}.** {rec}")
+        
         if after.get('customer_message'): 
             with st.expander("Zusammenfassung"): 
                 st.info(after['customer_message'])
+    
     else:
-        data = st.session_state.current_data; st.subheader("Aktuelle KPIs"); col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
-        with col2: st.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0)} Monate")
-        with col3: st.metric("Belegte Einheiten", data.get('belegt', 0))
-        with col4: facebook, google = data.get('social_facebook', 0), data.get('social_google', 0); st.metric("Social Engagement", facebook + google)
-        st.subheader("Aktuelle Visualisierungen"); col1, col2 = st.columns(2)
+        data = st.session_state.current_data
+        st.subheader("Aktuelle KPIs")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1: 
+            st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
+        with col2: 
+            st.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0)} Monate")
+        with col3: 
+            st.metric("Belegte Einheiten", data.get('belegt', 0))
+        with col4: 
+            facebook, google = data.get('social_facebook', 0), data.get('social_google', 0)
+            st.metric("Social Engagement", facebook + google)
+        
+        st.subheader("Aktuelle Visualisierungen")
+        col1, col2 = st.columns(2)
         with col1:
             belegung = data.get('belegungsgrad', 0)
             fig = go.Figure(data=[go.Pie(labels=["Belegt", "Frei"], values=[belegung, max(100 - belegung, 0)], hole=0.6)])
-            fig.update_layout(title="Belegungsgrad", height=300); st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(title="Belegungsgrad", height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        
         with col2:
             if 'kundenherkunft' in data:
                 df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
-                fig = px.pie(df, values='Anzahl', names='Kanal'); fig.update_layout(title="Kundenherkunft", height=300); st.plotly_chart(fig, use_container_width=True)
+                fig = px.pie(df, values='Anzahl', names='Kanal')
+                fig.update_layout(title="Kundenherkunft", height=300)
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                labels = data.get('neukunden_labels', ['Jan', 'Feb', 'Mär']); values = data.get('neukunden_monat', [5, 4, 7])
-                fig = go.Figure(data=[go.Bar(x=labels, y=values)]); fig.update_layout(title="Neukunden pro Monat", height=300); st.plotly_chart(fig, use_container_width=True)
+                labels = data.get('neukunden_labels', ['Jan', 'Feb', 'Mär'])
+                values = data.get('neukunden_monat', [5, 4, 7])
+                fig = go.Figure(data=[go.Bar(x=labels, y=values)])
+                fig.update_layout(title="Neukunden pro Monat", height=300)
+                st.plotly_chart(fig, use_container_width=True)
+    
     st.header("Analyse-History")
     tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
+    
     if tenant_history:
-        st.subheader("Entwicklung über Zeit"); col1, col2 = st.columns(2)
-        with col1: fig = create_timeseries_chart(tenant_history, 'belegungsgrad', 'Belegungsgrad (%)'); if fig: st.plotly_chart(fig, use_container_width=True)
-        with col2: fig = create_timeseries_chart(tenant_history, 'vertragsdauer_durchschnitt', 'Vertragsdauer (Monate)'); if fig: st.plotly_chart(fig, use_container_width=True)
-        st.subheader("Vergangene Analysen"); history_df = []
+        st.subheader("Entwicklung über Zeit")
+        col1, col2 = st.columns(2)
+        with col1: 
+            fig = create_timeseries_chart(tenant_history, 'belegungsgrad', 'Belegungsgrad (%)')
+            if fig: 
+                st.plotly_chart(fig, use_container_width=True)
+        with col2: 
+            fig = create_timeseries_chart(tenant_history, 'vertragsdauer_durchschnitt', 'Vertragsdauer (Monate)')
+            if fig: 
+                st.plotly_chart(fig, use_container_width=True)
+        
+        st.subheader("Vergangene Analysen")
+        history_df = []
         for entry in reversed(tenant_history[-10:]):
             entry_date = entry.get('ts', '')[:16].replace('T', ' ')
-            history_df.append({'Datum': entry_date, 'Dateien': len(entry.get('files', [])), 'Belegungsgrad': f"{entry['data'].get('belegungsgrad', 0)}%", 'Empfehlungen': len(entry['data'].get('recommendations', []))})
-        if history_df: st.dataframe(pd.DataFrame(history_df), use_container_width=True)
-    else: st.info("Noch keine Analysen durchgeführt. Starten Sie Ihre erste KI-Analyse!")
+            history_df.append({
+                'Datum': entry_date, 
+                'Dateien': len(entry.get('files', [])), 
+                'Belegungsgrad': f"{entry['data'].get('belegungsgrad', 0)}%", 
+                'Empfehlungen': len(entry['data'].get('recommendations', []))
+            })
+        
+        if history_df: 
+            st.dataframe(pd.DataFrame(history_df), use_container_width=True)
+    else: 
+        st.info("Noch keine Analysen durchgeführt. Starten Sie Ihre erste KI-Analyse!")
 
 def render_customers():
     st.title("Kundenanalyse"); data = st.session_state.current_data
