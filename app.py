@@ -526,81 +526,254 @@ def render_finance():
             st.info("Keine Finanzdaten verfügbar. Führen Sie eine Analyse durch.")
 
 def render_system():
-    st.title("System & Export"); data, tenant = st.session_state.current_data, st.session_state.current_tenant
-    st.header("Tenant-Information"); col1, col2 = st.columns(2)
-    with col1: st.info(f"Tenant-ID: `{tenant['tenant_id']}`"); st.info(f"Firmenname: {tenant['name']}")
-    with col2: st.info(f"Abo-Plan: {tenant['plan'].upper()}"); st.info(f"Analysen genutzt: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
-    st.header("Daten exportieren"); col1, col2, col3 = st.columns(3)
-    with col1: csv = pd.DataFrame([data]).to_csv(index=False); st.download_button("Aktuelle Daten (CSV)", csv, f"storage_current_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", use_container_width=True)
+    st.title("System & Export")
+    data = st.session_state.current_data
+    tenant = st.session_state.current_tenant
+    
+    st.header("Tenant-Information")
+    col1, col2 = st.columns(2)
+    with col1: 
+        st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
+        st.info(f"Firmenname: {tenant['name']}")
+    with col2: 
+        st.info(f"Abo-Plan: {tenant['plan'].upper()}")
+        st.info(f"Analysen genutzt: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+    
+    st.header("Daten exportieren")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1: 
+        csv = pd.DataFrame([data]).to_csv(index=False)
+        st.download_button(
+            "Aktuelle Daten (CSV)", 
+            csv, 
+            f"storage_current_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.csv", 
+            "text/csv", 
+            use_container_width=True
+        )
+    
     with col2:
         if st.session_state.get('show_comparison') and st.session_state.before_analysis:
-            comparison_data = {'vorher': st.session_state.before_analysis, 'nachher': st.session_state.after_analysis, 'vergleich_datum': datetime.now().isoformat()}
-            json_str = json.dumps(comparison_data, indent=2, ensure_ascii=False); st.download_button("Vergleich (JSON)", json_str, f"storage_comparison_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json", "application/json", use_container_width=True)
-        else: st.button("Vergleich (JSON)", disabled=True, use_container_width=True, help="Kein Vergleich verfügbar. Führen Sie eine Analyse durch.")
+            comparison_data = {
+                'vorher': st.session_state.before_analysis, 
+                'nachher': st.session_state.after_analysis, 
+                'vergleich_datum': datetime.now().isoformat()
+            }
+            json_str = json.dumps(comparison_data, indent=2, ensure_ascii=False)
+            st.download_button(
+                "Vergleich (JSON)", 
+                json_str, 
+                f"storage_comparison_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json", 
+                "application/json", 
+                use_container_width=True
+            )
+        else: 
+            st.button(
+                "Vergleich (JSON)", 
+                disabled=True, 
+                use_container_width=True, 
+                help="Kein Vergleich verfügbar. Führen Sie eine Analyse durch."
+            )
+    
     with col3:
         tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
-        if tenant_history: history_json = json.dumps(tenant_history, indent=2, ensure_ascii=False); st.download_button("Gesamte History (JSON)", history_json, f"storage_history_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json", "application/json", use_container_width=True)
-        else: st.button("History (JSON)", disabled=True, use_container_width=True, help="Keine History verfügbar")
-    st.header("Analyserverlauf"); tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
+        if tenant_history: 
+            history_json = json.dumps(tenant_history, indent=2, ensure_ascii=False)
+            st.download_button(
+                "Gesamte History (JSON)", 
+                history_json, 
+                f"storage_history_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json", 
+                "application/json", 
+                use_container_width=True
+            )
+        else: 
+            st.button(
+                "History (JSON)", 
+                disabled=True, 
+                use_container_width=True, 
+                help="Keine History verfügbar"
+            )
+    
+    st.header("Analyserverlauf")
+    tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
+    
     if tenant_history:
-        history_options = [f"{h['ts'][:16]} - {len(h.get('files', []))} Dateien" for h in reversed(tenant_history)]; selected = st.selectbox("Analyse auswählen", history_options, key="history_select")
+        history_options = [f"{h['ts'][:16]} - {len(h.get('files', []))} Dateien" for h in reversed(tenant_history)]
+        selected = st.selectbox("Analyse auswählen", history_options, key="history_select")
+        
         if selected:
-            idx = history_options.index(selected); selected_entry = list(reversed(tenant_history))[idx]
+            idx = history_options.index(selected)
+            selected_entry = list(reversed(tenant_history))[idx]
+            
             with st.expander("Analyse-Details", expanded=True):
-                st.write(f"Datum: {selected_entry['ts'][:19]}"); st.write(f"Dateien: {', '.join(selected_entry.get('files', []))}")
-                if selected_entry['data'].get('recommendations'): st.write("Empfehlungen:"); [st.write(f"- {rec}") for rec in selected_entry['data']['recommendations'][:3]]
-                if st.button("Diese Analyse laden", key="load_selected"): st.session_state.current_data = selected_entry['data'].copy(); st.session_state.before_analysis = selected_entry['data'].copy(); st.session_state.show_comparison = False; st.success("Analyse geladen!"); time.sleep(1); st.rerun()
+                st.write(f"Datum: {selected_entry['ts'][:19]}")
+                st.write(f"Dateien: {', '.join(selected_entry.get('files', []))}")
+                
+                if selected_entry['data'].get('recommendations'): 
+                    st.write("Empfehlungen:")
+                    for rec in selected_entry['data']['recommendations'][:3]:
+                        st.write(f"- {rec}")
+                
+                if st.button("Diese Analyse laden", key="load_selected"): 
+                    st.session_state.current_data = selected_entry['data'].copy()
+                    st.session_state.before_analysis = selected_entry['data'].copy()
+                    st.session_state.show_comparison = False
+                    st.success("Analyse geladen!")
+                    time.sleep(1)
+                    st.rerun()
+        
         if st.button("History löschen", type="secondary"):
             st.session_state.analyses_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') != tenant['tenant_id']]
-            st.session_state.current_data = DEFAULT_DATA.copy(); st.session_state.show_comparison = False; st.success("History gelöscht!"); st.rerun()
-    else: st.info("Noch keine Analysen für diesen Tenant")
-    st.header("Systeminformation"); col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("Analysen gesamt", len(tenant_history))
-    with col2: st.metric("Vergleich aktiv", "Ja" if st.session_state.get('show_comparison') else "Nein")
-    with col3: st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
-    with col4: st.metric("n8n URL", "Gesetzt" if st.session_state.n8n_url else "Fehlt")
+            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.show_comparison = False
+            st.success("History gelöscht!")
+            st.rerun()
+    else: 
+        st.info("Noch keine Analysen für diesen Tenant")
+    
+    st.header("Systeminformation")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1: 
+        st.metric("Analysen gesamt", len(tenant_history))
+    with col2: 
+        st.metric("Vergleich aktiv", "Ja" if st.session_state.get('show_comparison') else "Nein")
+    with col3: 
+        st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
+    with col4: 
+        st.metric("n8n URL", "Gesetzt" if st.session_state.n8n_url else "Fehlt")
+
 
 # HAUPTAPP
 def main():
-    if "current_data" not in st.session_state: st.session_state.current_data = DEFAULT_DATA.copy()
-    if "before_analysis" not in st.session_state: st.session_state.before_analysis = None
-    if "after_analysis" not in st.session_state: st.session_state.after_analysis = None
-    if "analyses_history" not in st.session_state: st.session_state.analyses_history = []
-    if "n8n_url" not in st.session_state: st.session_state.n8n_url = os.environ.get("N8N_URL", "")
-    if "debug_mode" not in st.session_state: st.session_state.debug_mode = False
-    if "show_comparison" not in st.session_state: st.session_state.show_comparison = False
-    if "last_analysis_loaded" not in st.session_state: st.session_state.last_analysis_loaded = False
-    if "logged_in" not in st.session_state: st.session_state.logged_in = False
-    if "current_tenant" not in st.session_state: st.session_state.current_tenant = None
+    if "current_data" not in st.session_state: 
+        st.session_state.current_data = DEFAULT_DATA.copy()
+    if "before_analysis" not in st.session_state: 
+        st.session_state.before_analysis = None
+    if "after_analysis" not in st.session_state: 
+        st.session_state.after_analysis = None
+    if "analyses_history" not in st.session_state: 
+        st.session_state.analyses_history = []
+    if "n8n_url" not in st.session_state: 
+        st.session_state.n8n_url = os.environ.get("N8N_URL", "")
+    if "debug_mode" not in st.session_state: 
+        st.session_state.debug_mode = False
+    if "show_comparison" not in st.session_state: 
+        st.session_state.show_comparison = False
+    if "last_analysis_loaded" not in st.session_state: 
+        st.session_state.last_analysis_loaded = False
+    if "logged_in" not in st.session_state: 
+        st.session_state.logged_in = False
+    if "current_tenant" not in st.session_state: 
+        st.session_state.current_tenant = None
+    
     with st.sidebar:
         st.title("Login & Einstellungen")
+        
         if not st.session_state.logged_in:
-            st.subheader("Anmelden"); email = st.text_input("E-Mail", key="login_email"); password = st.text_input("Passwort", type="password", key="login_password")
+            st.subheader("Anmelden")
+            email = st.text_input("E-Mail", key="login_email")
+            password = st.text_input("Passwort", type="password", key="login_password")
+            
             if st.button("Anmelden", type="primary", use_container_width=True):
                 if email in TENANTS:
-                    st.session_state.logged_in = True; st.session_state.current_tenant = TENANTS[email]; load_success = load_last_analysis()
-                    if load_success: st.success(f"Willkommen, {TENANTS[email]['name']}! Letzte Analyse geladen.")
-                    else: st.warning(f"Willkommen, {TENANTS[email]['name']}! Keine vorherige Analyse gefunden.")
-                    time.sleep(1); st.rerun()
-                else: st.error("Ungültige E-Mail oder Passwort")
+                    st.session_state.logged_in = True
+                    st.session_state.current_tenant = TENANTS[email]
+                    load_success = load_last_analysis()
+                    
+                    if load_success: 
+                        st.success(f"Willkommen, {TENANTS[email]['name']}! Letzte Analyse geladen.")
+                    else: 
+                        st.warning(f"Willkommen, {TENANTS[email]['name']}! Keine vorherige Analyse gefunden.")
+                    
+                    time.sleep(1)
+                    st.rerun()
+                else: 
+                    st.error("Ungültige E-Mail oder Passwort")
+        
         else:
-            tenant = st.session_state.current_tenant; st.success(f"Eingeloggt als: {tenant['name']}"); st.info(f"Plan: {tenant['plan'].upper()}"); st.info(f"Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}"); st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
-            if st.button("Abmelden", use_container_width=True): st.session_state.logged_in = False; st.session_state.current_tenant = None; st.session_state.show_comparison = False; st.session_state.last_analysis_loaded = False; st.rerun()
+            tenant = st.session_state.current_tenant
+            st.success(f"Eingeloggt als: {tenant['name']}")
+            st.info(f"Plan: {tenant['plan'].upper()}")
+            st.info(f"Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+            st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
+            
+            if st.button("Abmelden", use_container_width=True): 
+                st.session_state.logged_in = False
+                st.session_state.current_tenant = None
+                st.session_state.show_comparison = False
+                st.session_state.last_analysis_loaded = False
+                st.rerun()
+        
         st.divider()
+        
         if st.session_state.logged_in:
-            st.subheader("Konfiguration"); n8n_url = st.text_input("n8n Webhook URL", value=st.session_state.n8n_url, placeholder="https://your-n8n-instance.com/webhook/...", key="n8n_url_input"); st.session_state.n8n_url = n8n_url
-            if n8n_url: st.caption(f"Verwendet: `{n8n_url[:50]}...`"); st.session_state.debug_mode = st.checkbox("Debug-Modus"); st.divider(); st.subheader("Navigation")
-            page = st.radio("Menü", ["Übersicht", "Kunden", "Kapazität", "Finanzen", "System"], key="nav_radio", format_func=lambda x: f"📊 {x}" if x=="Übersicht" else f"👥 {x}" if x=="Kunden" else f"📦 {x}" if x=="Kapazität" else f"💰 {x}" if x=="Finanzen" else f"⚙️ {x}")
-            st.divider(); col1, col2 = st.columns(2)
-            with col1: if st.button("Vergleich zurücksetzen", use_container_width=True): st.session_state.show_comparison = False; st.success("Vergleich zurückgesetzt!"); time.sleep(1); st.rerun()
-            with col2: if st.button("Alle Daten", type="secondary", use_container_width=True): st.session_state.current_data = DEFAULT_DATA.copy(); st.session_state.before_analysis = None; st.session_state.after_analysis = None; st.session_state.show_comparison = False; st.success("Daten zurückgesetzt!"); time.sleep(1); st.rerun()
-        else: page = "Übersicht"
-    if not st.session_state.logged_in: render_login_page()
+            st.subheader("Konfiguration")
+            n8n_url = st.text_input(
+                "n8n Webhook URL", 
+                value=st.session_state.n8n_url, 
+                placeholder="https://your-n8n-instance.com/webhook/...", 
+                key="n8n_url_input"
+            )
+            st.session_state.n8n_url = n8n_url
+            
+            if n8n_url: 
+                st.caption(f"Verwendet: `{n8n_url[:50]}...`")
+            
+            st.session_state.debug_mode = st.checkbox("Debug-Modus")
+            st.divider()
+            st.subheader("Navigation")
+            
+            page = st.radio(
+                "Menü", 
+                ["Übersicht", "Kunden", "Kapazität", "Finanzen", "System"], 
+                key="nav_radio", 
+                format_func=lambda x: (
+                    f"📊 {x}" if x=="Übersicht" 
+                    else f"👥 {x}" if x=="Kunden" 
+                    else f"📦 {x}" if x=="Kapazität" 
+                    else f"💰 {x}" if x=="Finanzen" 
+                    else f"⚙️ {x}"
+                )
+            )
+            
+            st.divider()
+            col1, col2 = st.columns(2)
+            
+            with col1: 
+                if st.button("Vergleich zurücksetzen", use_container_width=True): 
+                    st.session_state.show_comparison = False
+                    st.success("Vergleich zurückgesetzt!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            with col2: 
+                if st.button("Alle Daten", type="secondary", use_container_width=True): 
+                    st.session_state.current_data = DEFAULT_DATA.copy()
+                    st.session_state.before_analysis = None
+                    st.session_state.after_analysis = None
+                    st.session_state.show_comparison = False
+                    st.success("Daten zurückgesetzt!")
+                    time.sleep(1)
+                    st.rerun()
+        
+        else: 
+            page = "Übersicht"
+    
+    if not st.session_state.logged_in: 
+        render_login_page()
     else:
-        if page == "Übersicht": render_overview()
-        elif page == "Kunden": render_customers()
-        elif page == "Kapazität": render_capacity()
-        elif page == "Finanzen": render_finance()
-        elif page == "System": render_system()
+        if page == "Übersicht": 
+            render_overview()
+        elif page == "Kunden": 
+            render_customers()
+        elif page == "Kapazität": 
+            render_capacity()
+        elif page == "Finanzen": 
+            render_finance()
+        elif page == "System": 
+            render_system()
 
-if __name__ == "__main__": main()
+
+if __name__ == "__main__": 
+    main()
