@@ -469,23 +469,61 @@ def render_capacity():
         with col2: fig = go.Figure(data=[go.Bar(x=["Belegt", "Frei"], y=[data.get("belegt", 0), data.get("frei", 0)])]); fig.update_layout(title="Kapazitätsverteilung", height=300); st.plotly_chart(fig, use_container_width=True)
 
 def render_finance():
-    st.title("Finanzübersicht"); data = st.session_state.current_data
+    st.title("Finanzübersicht")
+    data = st.session_state.current_data
+    
     if st.session_state.get('show_comparison') and st.session_state.before_analysis:
-        before, after = st.session_state.before_analysis, st.session_state.after_analysis; st.header("Finanzentwicklung"); col1, col2 = st.columns(2)
-        with col1: st.subheader("Vorher")
-        if 'zahlungsstatus' in before: df_before = pd.DataFrame({"Status": list(before['zahlungsstatus'].keys()), "Anzahl": list(before['zahlungsstatus'].values())}); st.dataframe(df_before, use_container_width=True)
-        with col2: st.subheader("Nachher")
-        if 'zahlungsstatus' in after: df_after = pd.DataFrame({"Status": list(after['zahlungsstatus'].keys()), "Anzahl": list(after['zahlungsstatus'].values())}); st.dataframe(df_after, use_container_width=True)
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        st.header("Finanzentwicklung")
+        
+        col1, col2 = st.columns(2)
+        with col1: 
+            st.subheader("Vorher")
+            if 'zahlungsstatus' in before: 
+                df_before = pd.DataFrame({"Status": list(before['zahlungsstatus'].keys()), "Anzahl": list(before['zahlungsstatus'].values())})
+                st.dataframe(df_before, use_container_width=True)
+        
+        with col2: 
+            st.subheader("Nachher")
+            if 'zahlungsstatus' in after: 
+                df_after = pd.DataFrame({"Status": list(after['zahlungsstatus'].keys()), "Anzahl": list(after['zahlungsstatus'].values())})
+                st.dataframe(df_after, use_container_width=True)
+        
         if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
-            st.subheader("Zahlungsmoral"); before_total = sum(before['zahlungsstatus'].values()); before_paid = before['zahlungsstatus'].get('bezahlt', 0); before_moral = (before_paid / before_total * 100) if before_total > 0 else 0
-            after_total = sum(after['zahlungsstatus'].values()); after_paid = after['zahlungsstatus'].get('bezahlt', 0); after_moral = (after_paid / after_total * 100) if after_total > 0 else 0; delta = after_moral - before_moral
-            col1, col2 = st.columns(2); with col1: st.metric("Zahlungsmoral Vorher", f"{before_moral:.1f}%"); with col2: st.metric("Zahlungsmoral Nachher", f"{after_moral:.1f}%", f"{delta:+.1f}%")
+            st.subheader("Zahlungsmoral")
+            before_total = sum(before['zahlungsstatus'].values())
+            before_paid = before['zahlungsstatus'].get('bezahlt', 0)
+            before_moral = (before_paid / before_total * 100) if before_total > 0 else 0
+            
+            after_total = sum(after['zahlungsstatus'].values())
+            after_paid = after['zahlungsstatus'].get('bezahlt', 0)
+            after_moral = (after_paid / after_total * 100) if after_total > 0 else 0
+            
+            delta = after_moral - before_moral
+            
+            col1, col2 = st.columns(2)
+            with col1: 
+                st.metric("Zahlungsmoral Vorher", f"{before_moral:.1f}%")
+            with col2: 
+                st.metric("Zahlungsmoral Nachher", f"{after_moral:.1f}%", f"{delta:+.1f}%")
+    
     else:
         status = data.get("zahlungsstatus", {})
-        if status: col1, col2 = st.columns(2)
-        with col1: df = pd.DataFrame({"Status": list(status.keys()), "Anzahl": list(status.values())}); st.dataframe(df, use_container_width=True)
-        with col2: total, paid = sum(status.values()), status.get('bezahlt', 0); moral = (paid / total * 100) if total > 0 else 0; st.metric("Zahlungsmoral", f"{moral:.1f}%"); fig = px.pie(df, values='Anzahl', names='Status'); st.plotly_chart(fig, use_container_width=True)
-        else: st.info("Keine Finanzdaten verfügbar. Führen Sie eine Analyse durch.")
+        if status: 
+            col1, col2 = st.columns(2)
+            with col1: 
+                df = pd.DataFrame({"Status": list(status.keys()), "Anzahl": list(status.values())})
+                st.dataframe(df, use_container_width=True)
+            with col2: 
+                total = sum(status.values())
+                paid = status.get('bezahlt', 0)
+                moral = (paid / total * 100) if total > 0 else 0
+                st.metric("Zahlungsmoral", f"{moral:.1f}%")
+                fig = px.pie(df, values='Anzahl', names='Status')
+                st.plotly_chart(fig, use_container_width=True)
+        else: 
+            st.info("Keine Finanzdaten verfügbar. Führen Sie eine Analyse durch.")
 
 def render_system():
     st.title("System & Export"); data, tenant = st.session_state.current_data, st.session_state.current_tenant
