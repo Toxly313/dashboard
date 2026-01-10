@@ -297,20 +297,51 @@ def perform_analysis(uploaded_files):
                 st.info("Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
         
-        # VERBESSERTE ANTWORTVERARBEITUNG
+        # VERBESSERTE ANTWORTVERARBEITUNG MIT SIMULATION, WENN N8N FEHLERHAFT IST
         processed_data = None
         
-        # Prüfe ob response ein Array mit leeren Objekten ist
-        if isinstance(response, list):
-            # Filtere leere Objekte heraus
-            non_empty_items = [item for item in response if item]
-            if len(non_empty_items) == 0:
-                st.error("n8n hat eine leere Antwort gesendet. Der Workflow könnte fehlerhaft sein.")
-                st.info("Bitte überprüfen Sie den n8n-Workflow und stellen Sie sicher, dass alle Nodes korrekt konfiguriert sind.")
-                return
+        # Prüfe auf leere n8n-Antwort (fehlerhafter Workflow)
+        if isinstance(response, list) and len(response) == 1 and response[0] == {}:
+            st.warning("⚠️ n8n hat eine leere Antwort gesendet. Verwende simulierte KI-Analyse.")
+            st.info("""
+            **n8n Workflow Problem:**
+            1. Der Workflow könnte fehlerhaft sein
+            2. Die AI Agent Node ist möglicherweise nicht konfiguriert
+            3. Der Workflow gibt keine Daten zurück
+            4. **Lösung:** Prüfen Sie den n8n-Workflow oder verwenden Sie die simulierte Analyse
+            """)
             
-            # Verwende das erste nicht-leere Item
-            response = non_empty_items[0]
+            # Option für simulierte Analyse anbieten
+            if st.button("Simulierte Analyse durchführen (Testdaten)"):
+                # Simulierte KI-Antwort erstellen
+                simulated_response = {
+                    "metrics": {
+                        "belegt": excel_merge.get('belegt', 22),
+                        "frei": excel_merge.get('frei', 3),
+                        "vertragsdauer_durchschnitt": excel_merge.get('vertragsdauer_durchschnitt', 8.1),
+                        "reminder_automat": excel_merge.get('reminder_automat', 18),
+                        "social_facebook": excel_merge.get('social_facebook', 320),
+                        "social_google": excel_merge.get('social_google', 75),
+                        "belegungsgrad": excel_merge.get('belegungsgrad', 88),
+                        "kundenherkunft": excel_merge.get('kundenherkunft', {"Online": 15, "Empfehlung": 8, "Vorbeikommen": 6}),
+                        "neukunden_labels": ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun"],
+                        "neukunden_monat": [7, 6, 9, 8, 10, 11],
+                        "zahlungsstatus": excel_merge.get('zahlungsstatus', {"bezahlt": 24, "offen": 1, "überfällig": 0})
+                    },
+                    "recommendations": [
+                        f"Optimieren Sie Ihre Lagerauslastung für {tenant_name}",
+                        "Automatische Zahlungserinnerungen einrichten",
+                        "Google Business Profile pflegen",
+                        "Social Media Marketing verstärken",
+                        "Kundenbindungsprogramm einführen"
+                    ],
+                    "customer_message": f"Simulierte Analyse für {tenant_name} abgeschlossen. Belegungsgrad: 88%, Ø Vertragsdauer: 8.1 Monate."
+                }
+                
+                # Verarbeite simulierte Antwort
+                response = simulated_response
+            else:
+                return
         
         # VERARBEITUNG DER KORREKTEN ANTWORTFORMATE
         if isinstance(response, dict):
@@ -416,8 +447,29 @@ OPTION 4 (ARRAY MIT DATEN): [{"metrics": {...}, "recommendations": [...], "summa
                     st.write(f"Array-Länge: {len(response)}")
                     for i, item in enumerate(response):
                         st.write(f"Item {i}: {type(item)} - {item}")
+            
+            # Option: Fallback mit Excel-Daten
+            if excel_merge:
+                st.info("⚠️ Verwende Excel-Daten als Fallback...")
+                merged_data = excel_merge.copy()
+                merged_data['recommendations'] = [
+                    f"Excel-Daten analysiert für {tenant_name}", 
+                    "Automatische Zahlungserinnerungen einrichten", 
+                    "Google Business Profile pflegen"
+                ]
+                merged_data['customer_message'] = f"Analyse basierend auf Excel-Daten für {tenant_name}"
+                merged_data['tenant_id'] = tenant_id
+                merged_data['analysis_date'] = datetime.now().isoformat()
+                merged_data['files'] = [f.name for f in uploaded_files]
+                
+                st.session_state.after_analysis = merged_data.copy()
+                st.session_state.current_data = merged_data.copy()
+                st.session_state.show_comparison = True
+                st.success(f"Excel-Analyse erfolgreich für {tenant_name}!")
+                time.sleep(2)
+                st.rerun()
 
-# SEITENFUNKTIONEN
+# SEITENFUNKTIONEN (identisch wie vorher, aber ich kürze für Lesbarkeit)
 def render_login_page():
     st.title("Self-Storage Business Intelligence")
     col1, col2 = st.columns(2)
