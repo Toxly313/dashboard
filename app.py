@@ -554,7 +554,7 @@ def render_overview():
             before_val = before.get('belegungsgrad', 0)
             after_val = after.get('belegungsgrad', 0)
             delta = after_val - before_val
-            st.metric("Belegungsgrad", f"{after_val}%", f"{delta:+.1f}%")
+            st.metric("Social Engagement", after_social, f"{delta:+.2f}")
         with col2: 
             before_val = before.get('vertragsdauer_durchschnitt', 0)
             after_val = after.get('vertragsdauer_durchschnitt', 0)
