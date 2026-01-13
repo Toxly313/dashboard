@@ -531,7 +531,6 @@ def render_login_page():
         st.write("Automatische Empfehlungen")
         st.write("Datenbank-Anbindung")
         st.write("Echtzeit-Updates")
-
 def render_overview():
     tenant = st.session_state.current_tenant
     st.title(f"Dashboard - {tenant['name']}")
@@ -584,22 +583,27 @@ def render_overview():
         
         st.subheader("Key Performance Indicators")
         col1, col2, col3, col4 = st.columns(4)
+        
         with col1: 
             before_val = before.get('belegungsgrad', 0)
             after_val = after.get('belegungsgrad', 0)
             delta = after_val - before_val
-            st.metric("Social Engagement", after_social, f"{delta:+.2f}")
+            st.metric("Belegungsgrad", f"{after_val}%", f"{delta:+.1f}%")
+        
         with col2: 
             before_val = before.get('vertragsdauer_durchschnitt', 0)
             after_val = after.get('vertragsdauer_durchschnitt', 0)
             delta = after_val - before_val
             st.metric("Ø Vertragsdauer", f"{after_val:.1f} Monate", f"{delta:+.1f}")
+        
         with col3: 
             before_val = before.get('belegt', 0)
             after_val = after.get('belegt', 0)
             delta = after_val - before_val
             st.metric("Belegte Einheiten", after_val, f"{delta:+d}")
+        
         with col4: 
+            # Hier wird after_social definiert, bevor es verwendet wird
             before_social = before.get('social_facebook', 0) + before.get('social_google', 0)
             after_social = after.get('social_facebook', 0) + after.get('social_google', 0)
             delta = after_social - before_social
@@ -607,10 +611,12 @@ def render_overview():
         
         st.subheader("Detail-Vergleich")
         col1, col2 = st.columns(2)
+        
         with col1:
             fig = create_comparison_chart(before, after, 'belegungsgrad', 'Belegungsgrad (%)')
             if fig: 
                 st.plotly_chart(fig, use_container_width=True)
+            
             if 'kundenherkunft' in before and 'kundenherkunft' in after:
                 fig = make_subplots(
                     rows=1, 
@@ -745,7 +751,7 @@ def render_overview():
             st.dataframe(pd.DataFrame(history_df), use_container_width=True)
     else: 
         st.info("Noch keine Analysen durchgeführt. Starten Sie Ihre erste KI-Analyse!")
-
+        
 def render_customers():
     st.title("Kundenanalyse")
     data = st.session_state.current_data
