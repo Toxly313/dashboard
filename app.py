@@ -1135,7 +1135,7 @@ def main():
         st.session_state.analyses_history = []
     if "n8n_base_url" not in st.session_state: 
         # Bitte ändere diese URL zu deiner tatsächlichen n8n Basis-URL
-        st.session_state.n8n_base_url = os.environ.get("N8N_BASE_URL", "https://deine-n8n-instanz.de/webhook")
+        st.session_state.n8n_base_url = os.environ.get("N8N_BASE_URL", "https://tundtelectronics.app.n8n.cloud/webhook-test")
     if "debug_mode" not in st.session_state: 
         st.session_state.debug_mode = False
     if "show_comparison" not in st.session_state: 
