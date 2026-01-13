@@ -1115,6 +1115,7 @@ def render_system():
 
 # HAUPTAPP
 def main():
+    # Session State Initialisierung
     if "current_data" not in st.session_state: 
         st.session_state.current_data = DEFAULT_DATA.copy()
     if "before_analysis" not in st.session_state: 
@@ -1123,8 +1124,9 @@ def main():
         st.session_state.after_analysis = None
     if "analyses_history" not in st.session_state: 
         st.session_state.analyses_history = []
-    if "n8n_url" not in st.session_state: 
-        st.session_state.n8n_url = os.environ.get("N8N_URL", "")
+    if "n8n_base_url" not in st.session_state: 
+        # Bitte ändere diese URL zu deiner tatsächlichen n8n Basis-URL
+        st.session_state.n8n_base_url = os.environ.get("N8N_BASE_URL", "https://deine-n8n-instanz.de/webhook")
     if "debug_mode" not in st.session_state: 
         st.session_state.debug_mode = False
     if "show_comparison" not in st.session_state: 
@@ -1178,16 +1180,18 @@ def main():
         
         if st.session_state.logged_in:
             st.subheader("Konfiguration")
-            n8n_url = st.text_input(
-                "n8n Webhook URL", 
-                value=st.session_state.n8n_url, 
-                placeholder="https://your-n8n-instance.com/webhook/...", 
-                key="n8n_url_input"
+            n8n_base_url = st.text_input(
+                "n8n Basis-URL (ohne Endpunkt)", 
+                value=st.session_state.n8n_base_url, 
+                placeholder="https://deine-n8n-instanz.de/webhook", 
+                help="Basis-URL ohne '/get-last-analysis-only' oder '/analyze-with-deepseek'",
+                key="n8n_base_url_input"
             )
-            st.session_state.n8n_url = n8n_url
+            st.session_state.n8n_base_url = n8n_base_url
             
-            if n8n_url: 
-                st.caption(f"Verwendet: `{n8n_url[:50]}...`")
+            if n8n_base_url: 
+                st.caption(f"Endpunkte: GET-LAST: `{n8n_base_url.rstrip('/')}/get-last-analysis-only`")
+                st.caption(f"NEW-ANALYSIS: `{n8n_base_url.rstrip('/')}/analyze-with-deepseek`")
             
             st.session_state.debug_mode = st.checkbox("Debug-Modus")
             st.divider()
