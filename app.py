@@ -244,70 +244,93 @@ def load_last_analysis():
             n8n_base_url, tenant_id, str(uuid.uuid4())
         )
 
-        if status != 200 or not response or not isinstance(response, dict):
-            if status != 200:
-                st.error(f"Fehler beim Laden: {message}")
-            else:
-                st.info("Keine vorherige Analyse gefunden oder Antwort hat falsches Format.")
+        # harter Fallback bei HTTP/Parsing Problemen
+        if status != 200 or response is None:
             st.session_state.current_data = DEFAULT_DATA.copy()
             st.session_state.before_analysis = DEFAULT_DATA.copy()
+            st.info("Keine vorherige Analyse gefunden oder Antwort hat falsches Format.")
             return False
 
-        # 1) Normalize: possible formats
-        payload = response
-
-        # Format A: { "current_analysis": {...} }
-        if "current_analysis" in response and isinstance(response["current_analysis"], dict):
-            payload = response["current_analysis"]
-
-        # Format B: { "rows": [ {...} ], "count": 1 }
-        if "rows" in response and isinstance(response["rows"], list) and len(response["rows"]) > 0:
-            payload = response["rows"][0]
-
-        # 2) Extract metrics
-        if isinstance(payload, dict) and "metrics" in payload and isinstance(payload["metrics"], dict):
-            metrics_data = payload["metrics"]
-            recommendations = payload.get("recommendations", [])
-            customer_message = payload.get("customer_message", "Letzte Analyse")
-            analysis_date = payload.get("analysis_date") or payload.get("timestamp") or datetime.now().isoformat()
-
+        # n8n kann dict oder list zurückgeben (je nach Respond Mode / Node)
+        if isinstance(response, list):
+            response_obj = response[0] if len(response) > 0 else {}
+        elif isinstance(response, dict):
+            response_obj = response
         else:
-            # Format C: metrics are flat at top-level (belegt, frei, Online, Empfehlung, ...)
-            # Build metrics dict from known keys
-            flat = payload if isinstance(payload, dict) else {}
-            metrics_data = {}
+            response_obj = {}
 
-            for key in [
+        # Schritt 1: normalize payload aus möglichen Containern
+        payload = response_obj
+
+        # Format: {rows:[...], count:n}
+        if isinstance(payload, dict) and "rows" in payload and isinstance(payload["rows"], list) and len(payload["rows"]) > 0:
+            payload = payload["rows"][0]
+
+        # Format: {current_analysis:{...}}
+        if isinstance(payload, dict) and "current_analysis" in payload and isinstance(payload["current_analysis"], dict):
+            payload = payload["current_analysis"]
+
+        # Schritt 2: metrics + meta extrahieren
+        metrics_data = None
+        recommendations = []
+        customer_message = ""
+        analysis_date = datetime.now().isoformat()
+
+        # A) Supabase Row Format: {analysis_result:{metrics:{...}}}
+        if isinstance(payload, dict) and "analysis_result" in payload and isinstance(payload["analysis_result"], dict):
+            ar = payload["analysis_result"]
+            if isinstance(ar.get("metrics"), dict):
+                metrics_data = ar["metrics"]
+                recommendations = ar.get("recommendations", []) or []
+                customer_message = ar.get("customer_message", "") or ""
+                analysis_date = ar.get("processed_at") or payload.get("updated_at") or payload.get("created_at") or analysis_date
+
+        # B) Direktes Format: {metrics:{...}}
+        if metrics_data is None and isinstance(payload, dict) and isinstance(payload.get("metrics"), dict):
+            metrics_data = payload["metrics"]
+            recommendations = payload.get("recommendations", []) or []
+            customer_message = payload.get("customer_message", "") or ""
+            analysis_date = payload.get("analysis_date") or payload.get("timestamp") or analysis_date
+
+        # C) Direkt flache Business-Daten
+        if metrics_data is None and isinstance(payload, dict) and any(k in payload for k in ["belegt", "frei", "belegungsgrad"]):
+            metrics_data = {}
+            for k in [
                 "belegt", "frei", "vertragsdauer_durchschnitt", "reminder_automat",
                 "social_facebook", "social_google", "belegungsgrad",
                 "kundenherkunft", "neukunden_labels", "neukunden_monat", "zahlungsstatus"
             ]:
-                if key in flat:
-                    metrics_data[key] = flat[key]
+                if k in payload:
+                    metrics_data[k] = payload[k]
 
-            # If kundenherkunft comes flat as Online/Empfehlung/Vorbeikommen:
-            if "kundenherkunft" not in metrics_data:
-                if any(k in flat for k in ["Online", "Empfehlung", "Vorbeikommen"]):
-                    metrics_data["kundenherkunft"] = {
-                        "Online": int(flat.get("Online", 0) or 0),
-                        "Empfehlung": int(flat.get("Empfehlung", 0) or 0),
-                        "Vorbeikommen": int(flat.get("Vorbeikommen", 0) or 0),
-                    }
+            # kundenherkunft falls flach
+            if "kundenherkunft" not in metrics_data and any(k in payload for k in ["Online", "Empfehlung", "Vorbeikommen"]):
+                metrics_data["kundenherkunft"] = {
+                    "Online": int(payload.get("Online", 0) or 0),
+                    "Empfehlung": int(payload.get("Empfehlung", 0) or 0),
+                    "Vorbeikommen": int(payload.get("Vorbeikommen", 0) or 0),
+                }
 
-            # If zahlungsstatus comes flat:
-            if "zahlungsstatus" not in metrics_data:
-                if any(k in flat for k in ["bezahlt", "offen", "überfällig"]):
-                    metrics_data["zahlungsstatus"] = {
-                        "bezahlt": int(flat.get("bezahlt", 0) or 0),
-                        "offen": int(flat.get("offen", 0) or 0),
-                        "überfällig": int(flat.get("überfällig", 0) or 0),
-                    }
+            # zahlungsstatus falls flach
+            if "zahlungsstatus" not in metrics_data and any(k in payload for k in ["bezahlt", "offen", "überfällig"]):
+                metrics_data["zahlungsstatus"] = {
+                    "bezahlt": int(payload.get("bezahlt", 0) or 0),
+                    "offen": int(payload.get("offen", 0) or 0),
+                    "überfällig": int(payload.get("überfällig", 0) or 0),
+                }
 
-            recommendations = flat.get("recommendations", [])
-            customer_message = flat.get("customer_message", "Letzte Analyse")
-            analysis_date = flat.get("analysis_date") or flat.get("timestamp") or datetime.now().isoformat()
+            recommendations = payload.get("recommendations", []) or []
+            customer_message = payload.get("customer_message", "") or ""
+            analysis_date = payload.get("analysis_date") or payload.get("timestamp") or analysis_date
 
-        # 3) Merge with defaults to ensure all keys exist
+        # Wenn immer noch nichts gefunden: Default
+        if not isinstance(metrics_data, dict) or len(metrics_data.keys()) == 0:
+            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.before_analysis = DEFAULT_DATA.copy()
+            st.info("Keine vorherige Analyse gefunden. Verwende Standarddaten.")
+            return True
+
+        # Schritt 3: Defaults mergen (stellt sicher, dass alle Keys existieren)
         loaded_data = DEFAULT_DATA.copy()
         loaded_data.update(metrics_data)
         loaded_data["recommendations"] = recommendations
