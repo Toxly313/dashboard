@@ -1133,7 +1133,7 @@ def main():
             n8n_base_url = st.text_input(
                 "n8n Basis-URL (ohne Endpunkt)", 
                 value=st.session_state.n8n_base_url, 
-                placeholder="https://deine-n8n-instanz.de/webhook", 
+                placeholder="https://tundtelectronics.app.n8n.cloud/webhook", 
                 help="Basis-URL ohne '/get-last-analysis-only' oder '/analyze-with-deepseek'",
                 key="n8n_base_url_input"
             )
