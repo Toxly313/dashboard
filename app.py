@@ -69,49 +69,35 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
         
-def post_to_n8n_analyze(url, file_tuple, tenant_id, uuid_str):
-    print(f"\nANALYZE Request für Tenant: {tenant_id}")
-    payload = {
-        "tenant_id": tenant_id, 
-        "uuid": uuid_str, 
-        "action": "analyze", 
-        "metadata": {
-            "source": "streamlit", 
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
-            "purpose": "new_analysis"
+def post_to_n8n_new_analysis(url, tenant_id, file_path):
+    print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
+    
+    with open(file_path, 'rb') as f:
+        files = {'file': f}
+        data = {
+            'tenant_id': tenant_id,
+            'mode': 'new_analysis',  # WICHTIG: Auch hier explizit setzen
+            'action': 'analyze'
         }
-    }
-    if file_tuple:
-        file_name, file_content, file_type = file_tuple
-        file_b64 = base64.b64encode(file_content).decode('utf-8')
-        payload["file"] = {
-            "filename": file_name, 
-            "content_type": file_type, 
-            "data": file_b64, 
-            "size": len(file_content)
-        }
-        print(f"Datei: {file_name} ({len(file_content)} bytes) als Base64")
-    headers = {'Content-Type': 'application/json'}
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
-        print(f"ANALYZE Response Status: {response.status_code}")
-        if response.status_code != 200:
-            print(f"ANALYZE Fehler: {response.text[:200]}")
-            return response.status_code, f"HTTP {response.status_code}", None
+        
         try:
-            json_response = response.json()
-            print("ANALYZE JSON erhalten")
-            return response.status_code, "Success", json_response
-        except json.JSONDecodeError:
-            print(f"Kein JSON in ANALYZE Response: {response.text[:200]}")
-            return response.status_code, "No JSON", response.text
-    except requests.exceptions.Timeout:
-        print("ANALYZE Timeout nach 60s")
-        return 408, "Timeout", None
-    except Exception as e:
-        print(f"ANALYZE Exception: {str(e)}")
-        return 500, f"Error: {str(e)}", None
-
+            response = requests.post(url, files=files, data=data, timeout=30)
+            print(f"NEW-ANALYSIS Response Status: {response.status_code}")
+            if response.status_code != 200:
+                return response.status_code, f"HTTP {response.status_code}", None
+            try:
+                json_response = response.json()
+                print(f"NEW-ANALYSIS JSON erhalten")
+                return response.status_code, "Success", json_response
+            except json.JSONDecodeError:
+                print(f"Kein JSON in NEW-ANALYSIS Response: {response.text[:200]}")
+                return response.status_code, "No JSON", response.text
+        except requests.exceptions.Timeout:
+            print("NEW-ANALYSIS Timeout nach 30s")
+            return 408, "Timeout", None
+        except Exception as e:
+            print(f"NEW-ANALYSIS Exception: {str(e)}")
+            return 500, f"Error: {str(e)}", None
 def extract_metrics_from_excel(df):
     metrics = {}
     try:
