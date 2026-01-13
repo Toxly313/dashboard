@@ -69,7 +69,7 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
         
-def post_to_n8n_new_analysis_base64(url, tenant_id, file_path):
+def post_to_n8n_analyze(url, tenant_id, file_path):
     print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
     
     with open(file_path, 'rb') as f:
