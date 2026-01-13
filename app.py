@@ -607,7 +607,7 @@ def render_overview():
             before_social = before.get('social_facebook', 0) + before.get('social_google', 0)
             after_social = after.get('social_facebook', 0) + after.get('social_google', 0)
             delta = after_social - before_social
-            st.metric("Social Engagement", after_social, f"{delta:+d}")
+            st.metric("Social Engagement", after_social, f"{delta:+.0f}")
         
         st.subheader("Detail-Vergleich")
         col1, col2 = st.columns(2)
