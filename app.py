@@ -289,16 +289,16 @@ def load_last_analysis():
     if not st.session_state.logged_in: 
         return False
     tenant_id = st.session_state.current_tenant['tenant_id']
-    n8n_url = st.session_state.n8n_url
+    n8n_base_url = st.session_state.n8n_base_url
     
-    if not n8n_url:
-        st.warning("n8n URL nicht gesetzt. Verwende Standarddaten.")
+    if not n8n_base_url:
+        st.warning("n8n Basis-URL nicht gesetzt. Verwende Standarddaten.")
         st.session_state.current_data = DEFAULT_DATA.copy()
         st.session_state.before_analysis = DEFAULT_DATA.copy()
         return True
     
     with st.spinner("Lade letzte Analyse..."):
-        status, message, response = post_to_n8n_get_last(n8n_url, tenant_id, str(uuid.uuid4()))
+        status, message, response = post_to_n8n_get_last(n8n_base_url, tenant_id, str(uuid.uuid4()))
         
         # VERBESSERTE FEHLERBEHANDLUNG
         if status == 200 and response and isinstance(response, dict):
@@ -355,19 +355,19 @@ def perform_analysis(uploaded_files):
             except Exception as e: 
                 st.warning(f"Excel-Fehler: {str(e)[:50]}")
         
-        # Überprüfe n8n URL
-        n8n_url = st.session_state.n8n_url
-        if not n8n_url: 
-            st.error("Bitte n8n URL in der Sidebar eingeben")
+        # Überprüfe n8n Basis-URL
+        n8n_base_url = st.session_state.n8n_base_url
+        if not n8n_base_url: 
+            st.error("Bitte n8n Basis-URL in der Sidebar eingeben")
             return
         
         # Erste Datei für n8n Analyse vorbereiten
         main_file = uploaded_files[0]
         file_info = (main_file.name, main_file.getvalue(), main_file.type)
         
-        # n8n Analyse aufrufen
+        # n8n Analyse aufrufen (KI-Workflow)
         status, message, response = post_to_n8n_analyze(
-            n8n_url, 
+            n8n_base_url, 
             tenant_id, 
             str(uuid.uuid4()),
             file_info
@@ -380,6 +380,8 @@ def perform_analysis(uploaded_files):
                 st.write(f"Meldung: {message}")
                 st.write(f"Tenant-ID: {tenant_id}")
                 st.write(f"Tenant-Name: {tenant_name}")
+                st.write(f"Basis-URL: {n8n_base_url}")
+                st.write(f"Vollständige URL: {n8n_base_url.rstrip('/')}/analyze-with-deepseek")
                 if response: 
                     st.write("Rohantwort von n8n:")
                     st.json(response)
@@ -388,7 +390,7 @@ def perform_analysis(uploaded_files):
         if status != 200 or not response:
             st.error(f"n8n-Fehler: {message}")
             if status == 400: 
-                st.info("Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
+                st.info("Tipp: Prüfen Sie ob die n8n Basis-URL korrekt ist und der Workflow aktiv ist.")
             return
         
         # VERBESSERTE ANTWORTVERARBEITUNG
