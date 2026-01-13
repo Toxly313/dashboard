@@ -35,17 +35,18 @@ DEFAULT_DATA = {
 }
 
 # HILFSFUNKTIONEN
+# HILFSFUNKTIONEN
 def post_to_n8n_get_last(url, tenant_id, uuid_str):
     print(f"\nGET-LAST Request für Tenant: {tenant_id}")
     payload = {
         "tenant_id": tenant_id, 
         "uuid": uuid_str, 
         "action": "analyze", 
+        "mode": "get_last",  # WICHTIG: mode auf oberster Ebene!
         "metadata": {
             "source": "streamlit", 
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
-            "purpose": "load_last_analysis", 
-            "mode": "get_last"
+            "purpose": "load_last_analysis"
         }
     }
     headers = {'Content-Type': 'application/json'}
@@ -67,7 +68,7 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
     except Exception as e:
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
-
+        
 def post_to_n8n_analyze(url, file_tuple, tenant_id, uuid_str):
     print(f"\nANALYZE Request für Tenant: {tenant_id}")
     payload = {
