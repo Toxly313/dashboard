@@ -36,13 +36,22 @@ DEFAULT_DATA = {
 
 # HILFSFUNKTIONEN
 # HILFSFUNKTIONEN
-def post_to_n8n_get_last(url, tenant_id, uuid_str):
+# HILFSFUNKTIONEN
+def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
+    """
+    Sendet GET-LAST Request an den einfachen Workflow
+    """
     print(f"\nGET-LAST Request für Tenant: {tenant_id}")
+    
+    # Vollständige URL bauen
+    url = f"{base_url.rstrip('/')}/get-last-analysis-only"
+    print(f"GET-LAST URL: {url}")
+    
     payload = {
         "tenant_id": tenant_id, 
         "uuid": uuid_str, 
         "action": "analyze", 
-        "mode": "get_last",  # WICHTIG: mode auf oberster Ebene!
+        "mode": "get_last",
         "metadata": {
             "source": "streamlit", 
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
@@ -67,6 +76,63 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
         return 408, "Timeout", None
     except Exception as e:
         print(f"GET-LAST Exception: {str(e)}")
+        return 500, f"Error: {str(e)}", None
+        
+def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
+    """
+    Sendet NEW-ANALYSIS Request an den KI-Workflow
+    """
+    print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
+    
+    # Vollständige URL bauen
+    url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
+    print(f"NEW-ANALYSIS URL: {url}")
+    
+    # Extrahiere Dateiinformationen aus Tuple
+    filename, file_content, file_type = file_info
+    
+    # Kodiere Dateiinhalt als base64
+    base64_content = base64.b64encode(file_content).decode('utf-8')
+    
+    payload = {
+        "tenant_id": tenant_id,
+        "mode": "new_analysis",
+        "action": "analyze",
+        "uuid": uuid_str,
+        "metadata": {
+            "source": "streamlit", 
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+            "purpose": "new_analysis"
+        },
+        "file": {
+            "filename": filename,
+            "content_type": file_type,
+            "data": base64_content
+        }
+    }
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        print(f"NEW-ANALYSIS Response Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            return response.status_code, f"HTTP {response.status_code}", None
+        
+        try:
+            json_response = response.json()
+            print(f"NEW-ANALYSIS JSON erhalten")
+            return response.status_code, "Success", json_response
+        except json.JSONDecodeError:
+            print(f"Kein JSON in NEW-ANALYSIS Response: {response.text[:200]}")
+            return response.status_code, "No JSON", response.text
+            
+    except requests.exceptions.Timeout:
+        print("NEW-ANALYSIS Timeout nach 30s")
+        return 408, "Timeout", None
+    except Exception as e:
+        print(f"NEW-ANALYSIS Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
         
 def post_to_n8n_analyze(url, tenant_id, uuid_str, file_info):
