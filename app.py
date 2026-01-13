@@ -599,6 +599,7 @@ def render_login_page():
         st.write("Automatische Empfehlungen")
         st.write("Datenbank-Anbindung")
         st.write("Echtzeit-Updates")
+        
 def render_overview():
     tenant = st.session_state.current_tenant
     st.title(f"Dashboard - {tenant['name']}")
@@ -1111,8 +1112,16 @@ def render_system():
     with col3: 
         st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
     with col4: 
-        st.metric("n8n URL", "Gesetzt" if st.session_state.n8n_url else "Fehlt")
-
+        st.metric("n8n Basis-URL", "Gesetzt" if st.session_state.n8n_base_url else "Fehlt")
+    
+    # Neue Information über die Endpunkte
+    st.subheader("n8n Endpunkte")
+    if st.session_state.n8n_base_url:
+        base = st.session_state.n8n_base_url.rstrip('/')
+        st.code(f"GET-LAST: {base}/get-last-analysis-only")
+        st.code(f"NEW-ANALYSIS: {base}/analyze-with-deepseek")
+    else:
+        st.info("n8n Basis-URL nicht konfiguriert")
 # HAUPTAPP
 def main():
     # Session State Initialisierung
