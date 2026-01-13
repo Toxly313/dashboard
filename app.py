@@ -69,19 +69,33 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
         
-def post_to_n8n_new_analysis(url, tenant_id, file_path):
+def post_to_n8n_new_analysis_base64(url, tenant_id, file_path):
     print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
     
     with open(file_path, 'rb') as f:
-        files = {'file': f}
-        data = {
-            'tenant_id': tenant_id,
-            'mode': 'new_analysis',  # WICHTIG: Auch hier explizit setzen
-            'action': 'analyze'
+        file_content = f.read()
+        base64_content = base64.b64encode(file_content).decode('utf-8')
+        
+        payload = {
+            "tenant_id": tenant_id,
+            "mode": "new_analysis",  # WICHTIG: auf oberster Ebene
+            "action": "analyze",
+            "metadata": {
+                "source": "streamlit", 
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+                "purpose": "new_analysis"
+            },
+            "file": {
+                "filename": os.path.basename(file_path),
+                "content_type": "application/octet-stream",
+                "data": base64_content
+            }
         }
         
+        headers = {'Content-Type': 'application/json'}
+        
         try:
-            response = requests.post(url, files=files, data=data, timeout=30)
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
             print(f"NEW-ANALYSIS Response Status: {response.status_code}")
             if response.status_code != 200:
                 return response.status_code, f"HTTP {response.status_code}", None
@@ -98,6 +112,7 @@ def post_to_n8n_new_analysis(url, tenant_id, file_path):
         except Exception as e:
             print(f"NEW-ANALYSIS Exception: {str(e)}")
             return 500, f"Error: {str(e)}", None
+            
 def extract_metrics_from_excel(df):
     metrics = {}
     try:
