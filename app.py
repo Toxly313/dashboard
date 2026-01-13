@@ -227,54 +227,99 @@ def create_timeseries_chart(history_data, metric_key, title):
     return fig
 
 def load_last_analysis():
-    if not st.session_state.logged_in: 
+    if not st.session_state.logged_in:
         return False
-    tenant_id = st.session_state.current_tenant['tenant_id']
+
+    tenant_id = st.session_state.current_tenant["tenant_id"]
     n8n_base_url = st.session_state.n8n_base_url
-    
+
     if not n8n_base_url:
         st.warning("n8n Basis-URL nicht gesetzt. Verwende Standarddaten.")
         st.session_state.current_data = DEFAULT_DATA.copy()
         st.session_state.before_analysis = DEFAULT_DATA.copy()
         return True
-    
+
     with st.spinner("Lade letzte Analyse..."):
-        status, message, response = post_to_n8n_get_last(n8n_base_url, tenant_id, str(uuid.uuid4()))
-        
-        # VERBESSERTE FEHLERBEHANDLUNG
-        if status == 200 and response and isinstance(response, dict):
-            if response.get('current_analysis'):
-                current_analysis = response['current_analysis']
-                metrics_data = current_analysis.get('metrics', current_analysis)
-                recommendations = current_analysis.get('recommendations', [])
-                customer_message = current_analysis.get('customer_message', 'Letzte Analyse')
-                
-                loaded_data = {
-                    **metrics_data, 
-                    'recommendations': recommendations, 
-                    'customer_message': customer_message, 
-                    'analysis_date': current_analysis.get('analysis_date', datetime.now().isoformat()), 
-                    'tenant_id': tenant_id
-                }
-                
-                st.session_state.current_data = loaded_data
-                st.session_state.before_analysis = loaded_data.copy()
-                st.session_state.last_analysis_loaded = True
-                return True
-            else:
-                st.session_state.current_data = DEFAULT_DATA.copy()
-                st.session_state.before_analysis = DEFAULT_DATA.copy()
-                st.info("Keine vorherige Analyse gefunden. Verwende Standarddaten.")
-                return True
-        else:
+        status, message, response = post_to_n8n_get_last(
+            n8n_base_url, tenant_id, str(uuid.uuid4())
+        )
+
+        if status != 200 or not response or not isinstance(response, dict):
             if status != 200:
                 st.error(f"Fehler beim Laden: {message}")
             else:
                 st.info("Keine vorherige Analyse gefunden oder Antwort hat falsches Format.")
-            
             st.session_state.current_data = DEFAULT_DATA.copy()
             st.session_state.before_analysis = DEFAULT_DATA.copy()
             return False
+
+        # 1) Normalize: possible formats
+        payload = response
+
+        # Format A: { "current_analysis": {...} }
+        if "current_analysis" in response and isinstance(response["current_analysis"], dict):
+            payload = response["current_analysis"]
+
+        # Format B: { "rows": [ {...} ], "count": 1 }
+        if "rows" in response and isinstance(response["rows"], list) and len(response["rows"]) > 0:
+            payload = response["rows"][0]
+
+        # 2) Extract metrics
+        if isinstance(payload, dict) and "metrics" in payload and isinstance(payload["metrics"], dict):
+            metrics_data = payload["metrics"]
+            recommendations = payload.get("recommendations", [])
+            customer_message = payload.get("customer_message", "Letzte Analyse")
+            analysis_date = payload.get("analysis_date") or payload.get("timestamp") or datetime.now().isoformat()
+
+        else:
+            # Format C: metrics are flat at top-level (belegt, frei, Online, Empfehlung, ...)
+            # Build metrics dict from known keys
+            flat = payload if isinstance(payload, dict) else {}
+            metrics_data = {}
+
+            for key in [
+                "belegt", "frei", "vertragsdauer_durchschnitt", "reminder_automat",
+                "social_facebook", "social_google", "belegungsgrad",
+                "kundenherkunft", "neukunden_labels", "neukunden_monat", "zahlungsstatus"
+            ]:
+                if key in flat:
+                    metrics_data[key] = flat[key]
+
+            # If kundenherkunft comes flat as Online/Empfehlung/Vorbeikommen:
+            if "kundenherkunft" not in metrics_data:
+                if any(k in flat for k in ["Online", "Empfehlung", "Vorbeikommen"]):
+                    metrics_data["kundenherkunft"] = {
+                        "Online": int(flat.get("Online", 0) or 0),
+                        "Empfehlung": int(flat.get("Empfehlung", 0) or 0),
+                        "Vorbeikommen": int(flat.get("Vorbeikommen", 0) or 0),
+                    }
+
+            # If zahlungsstatus comes flat:
+            if "zahlungsstatus" not in metrics_data:
+                if any(k in flat for k in ["bezahlt", "offen", "überfällig"]):
+                    metrics_data["zahlungsstatus"] = {
+                        "bezahlt": int(flat.get("bezahlt", 0) or 0),
+                        "offen": int(flat.get("offen", 0) or 0),
+                        "überfällig": int(flat.get("überfällig", 0) or 0),
+                    }
+
+            recommendations = flat.get("recommendations", [])
+            customer_message = flat.get("customer_message", "Letzte Analyse")
+            analysis_date = flat.get("analysis_date") or flat.get("timestamp") or datetime.now().isoformat()
+
+        # 3) Merge with defaults to ensure all keys exist
+        loaded_data = DEFAULT_DATA.copy()
+        loaded_data.update(metrics_data)
+        loaded_data["recommendations"] = recommendations
+        loaded_data["customer_message"] = customer_message
+        loaded_data["analysis_date"] = analysis_date
+        loaded_data["tenant_id"] = tenant_id
+
+        st.session_state.current_data = loaded_data
+        st.session_state.before_analysis = loaded_data.copy()
+        st.session_state.last_analysis_loaded = True
+        return True
+
 
 def perform_analysis(uploaded_files):
     with st.spinner("KI analysiert Daten..."):
