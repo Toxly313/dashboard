@@ -69,49 +69,67 @@ def post_to_n8n_get_last(url, tenant_id, uuid_str):
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
         
-def post_to_n8n_analyze(url, tenant_id, file_path):
+def post_to_n8n_analyze(url, tenant_id, uuid_str, file_info):
+    """
+    Sendet Datei an n8n Webhook zur Analyse.
+    
+    Args:
+        url: n8n Webhook URL
+        tenant_id: Tenant ID
+        uuid_str: Eindeutige UUID
+        file_info: Tuple mit (filename, file_content, file_type)
+        
+    Returns:
+        tuple: (status_code, message, response_data)
+    """
     print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
     
-    with open(file_path, 'rb') as f:
-        file_content = f.read()
-        base64_content = base64.b64encode(file_content).decode('utf-8')
-        
-        payload = {
-            "tenant_id": tenant_id,
-            "mode": "new_analysis",  # WICHTIG: auf oberster Ebene
-            "action": "analyze",
-            "metadata": {
-                "source": "streamlit", 
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
-                "purpose": "new_analysis"
-            },
-            "file": {
-                "filename": os.path.basename(file_path),
-                "content_type": "application/octet-stream",
-                "data": base64_content
-            }
+    # Extrahiere Dateiinformationen aus Tuple
+    filename, file_content, file_type = file_info
+    
+    # Kodiere Dateiinhalt als base64
+    base64_content = base64.b64encode(file_content).decode('utf-8')
+    
+    payload = {
+        "tenant_id": tenant_id,
+        "mode": "new_analysis",
+        "action": "analyze",
+        "uuid": uuid_str,
+        "metadata": {
+            "source": "streamlit", 
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+            "purpose": "new_analysis"
+        },
+        "file": {
+            "filename": filename,
+            "content_type": file_type,
+            "data": base64_content
         }
+    }
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        print(f"NEW-ANALYSIS Response Status: {response.status_code}")
         
-        headers = {'Content-Type': 'application/json'}
+        if response.status_code != 200:
+            return response.status_code, f"HTTP {response.status_code}", None
         
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
-            print(f"NEW-ANALYSIS Response Status: {response.status_code}")
-            if response.status_code != 200:
-                return response.status_code, f"HTTP {response.status_code}", None
-            try:
-                json_response = response.json()
-                print(f"NEW-ANALYSIS JSON erhalten")
-                return response.status_code, "Success", json_response
-            except json.JSONDecodeError:
-                print(f"Kein JSON in NEW-ANALYSIS Response: {response.text[:200]}")
-                return response.status_code, "No JSON", response.text
-        except requests.exceptions.Timeout:
-            print("NEW-ANALYSIS Timeout nach 30s")
-            return 408, "Timeout", None
-        except Exception as e:
-            print(f"NEW-ANALYSIS Exception: {str(e)}")
-            return 500, f"Error: {str(e)}", None
+            json_response = response.json()
+            print(f"NEW-ANALYSIS JSON erhalten")
+            return response.status_code, "Success", json_response
+        except json.JSONDecodeError:
+            print(f"Kein JSON in NEW-ANALYSIS Response: {response.text[:200]}")
+            return response.status_code, "No JSON", response.text
+            
+    except requests.exceptions.Timeout:
+        print("NEW-ANALYSIS Timeout nach 30s")
+        return 408, "Timeout", None
+    except Exception as e:
+        print(f"NEW-ANALYSIS Exception: {str(e)}")
+        return 500, f"Error: {str(e)}", None
             
 def extract_metrics_from_excel(df):
     metrics = {}
@@ -261,6 +279,7 @@ def perform_analysis(uploaded_files):
         tenant_name = st.session_state.current_tenant['name']
         st.session_state.before_analysis = st.session_state.current_data.copy()
         
+        # Excel-Daten extrahieren (falls vorhanden)
         excel_merge = {}
         for excel_file in [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls"))]:
             try: 
@@ -270,19 +289,25 @@ def perform_analysis(uploaded_files):
             except Exception as e: 
                 st.warning(f"Excel-Fehler: {str(e)[:50]}")
         
+        # Überprüfe n8n URL
         n8n_url = st.session_state.n8n_url
         if not n8n_url: 
             st.error("Bitte n8n URL in der Sidebar eingeben")
             return
         
+        # Erste Datei für n8n Analyse vorbereiten
         main_file = uploaded_files[0]
+        file_info = (main_file.name, main_file.getvalue(), main_file.type)
+        
+        # n8n Analyse aufrufen
         status, message, response = post_to_n8n_analyze(
             n8n_url, 
-            (main_file.name, main_file.getvalue(), main_file.type), 
             tenant_id, 
-            str(uuid.uuid4())
+            str(uuid.uuid4()),
+            file_info
         )
         
+        # Debug-Informationen
         if st.session_state.debug_mode:
             with st.expander("Debug: n8n Kommunikation", expanded=True):
                 st.write(f"Status: {status}")
@@ -293,13 +318,14 @@ def perform_analysis(uploaded_files):
                     st.write("Rohantwort von n8n:")
                     st.json(response)
         
+        # Fehlerbehandlung
         if status != 200 or not response:
             st.error(f"n8n-Fehler: {message}")
             if status == 400: 
                 st.info("Tipp: Prüfen Sie ob die n8n URL korrekt ist und der Workflow aktiv ist.")
             return
         
-        # VERBESSERTE ANTWORTVERARBEITUNG MIT SIMULATION, WENN N8N FEHLERHAFT IST
+        # VERBESSERTE ANTWORTVERARBEITUNG
         processed_data = None
         
         # Prüfe auf leere n8n-Antwort (fehlerhafter Workflow)
@@ -391,11 +417,13 @@ def perform_analysis(uploaded_files):
                 if st.session_state.debug_mode: 
                     st.success("Direkte Business-Daten erkannt!")
         
+        # Daten verarbeiten
         if processed_data:
             metrics_data = processed_data.get('metrics', {})
             recommendations = processed_data.get('recommendations', [])
             customer_message = processed_data.get('customer_message', '')
             
+            # Fallback für Empfehlungen
             if not recommendations: 
                 recommendations = [
                     f"Optimieren Sie Ihre Lagerauslastung für {tenant_name}", 
@@ -403,6 +431,7 @@ def perform_analysis(uploaded_files):
                     "Google Business Profile pflegen"
                 ]
             
+            # Excel-Daten mit n8n-Daten mergen
             merged_data = merge_data(metrics_data, excel_merge)
             merged_data['recommendations'] = recommendations
             merged_data['customer_message'] = customer_message
@@ -410,9 +439,11 @@ def perform_analysis(uploaded_files):
             merged_data['analysis_date'] = datetime.now().isoformat()
             merged_data['files'] = [f.name for f in uploaded_files]
             
+            # Session State aktualisieren
             st.session_state.after_analysis = merged_data.copy()
             st.session_state.current_data = merged_data.copy()
             
+            # History-Eintrag hinzufügen
             history_entry = {
                 "ts": datetime.now().isoformat(), 
                 "data": merged_data.copy(), 
@@ -423,6 +454,7 @@ def perform_analysis(uploaded_files):
             }
             st.session_state.analyses_history.append(history_entry)
             
+            # Analyse-Zähler erhöhen
             if 'analyses_used' in st.session_state.current_tenant: 
                 st.session_state.current_tenant['analyses_used'] += 1
             
@@ -450,7 +482,7 @@ OPTION 4 (ARRAY MIT DATEN): [{"metrics": {...}, "recommendations": [...], "summa
                     for i, item in enumerate(response):
                         st.write(f"Item {i}: {type(item)} - {item}")
             
-            # Option: Fallback mit Excel-Daten
+            # Fallback mit Excel-Daten
             if excel_merge:
                 st.info("⚠️ Verwende Excel-Daten als Fallback...")
                 merged_data = excel_merge.copy()
