@@ -121,10 +121,10 @@ DEFAULT_DATA = {
 }
 
 # HILFSFUNKTIONEN
+# ====== KORRIGIERTE API-FUNKTIONEN ======
 def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
     """
-    Holt die letzte Analyse aus Supabase
-    Gibt standardisiertes Format zurück
+    Erwartet jetzt Contract-Format von n8n
     """
     print(f"\nGET-LAST Request für Tenant: {tenant_id}")
     
@@ -134,12 +134,7 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
     payload = {
         "tenant_id": tenant_id,
         "uuid": uuid_str,
-        "action": "get_last_analysis",
-        "metadata": {
-            "source": "streamlit",
-            "timestamp": datetime.now().isoformat(),
-            "purpose": "load_last_analysis"
-        }
+        "action": "get_last_analysis"
     }
     
     headers = {'Content-Type': 'application/json'}
@@ -149,26 +144,152 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
         print(f"GET-LAST Response Status: {response.status_code}")
         
         if response.status_code != 200:
-            return response.status_code, f"HTTP {response.status_code}", None
+            return None, f"HTTP {response.status_code}", None
         
         try:
             json_response = response.json()
-            print(f"GET-LAST JSON erhalten: {type(json_response)}")
+            print(f"GET-LAST JSON Typ: {type(json_response)}")
             
-            # ====== WICHTIG: Standardisiere die Response ======
-            standardized_response = standardize_get_last_response(json_response, tenant_id)
-            
-            return response.status_code, "Success", standardized_response
+            # NEU: Contract-Format erkennen
+            if isinstance(json_response, dict) and 'data' in json_response:
+                # Contract-Format erkannt
+                contract = json_response
+                print(f"✅ Contract Format erkannt, Status: {contract.get('status')}")
+                
+                if contract.get('status') == 'success' and contract.get('count', 0) > 0:
+                    # Extrahiere die Business-Daten aus data.metrics
+                    data = contract['data']
+                    
+                    # Kombiniere metrics mit den anderen Feldern
+                    business_data = data['metrics'].copy() if 'metrics' in data else {}
+                    business_data['recommendations'] = data.get('recommendations', [])
+                    business_data['customer_message'] = data.get('customer_message', '')
+                    business_data['analysis_date'] = data.get('analysis_date', '')
+                    business_data['tenant_id'] = contract.get('tenant_id', tenant_id)
+                    
+                    return business_data, "Success", None
+                else:
+                    return None, f"Keine Daten im Contract (Status: {contract.get('status')})", json_response
+            else:
+                # Altes Format (Fallback)
+                print("⚠️ Altes Format, versuche direkte Business-Daten")
+                if isinstance(json_response, dict) and any(key in json_response for key in ["belegt", "frei", "belegungsgrad"]):
+                    return json_response, "Success (altes Format)", None
+                else:
+                    return None, "Ungültiges Format", json_response
+                
         except json.JSONDecodeError:
-            print(f"Kein JSON in GET-LAST Response: {response.text[:200]}")
-            return response.status_code, "No JSON", None
+            return None, "Kein JSON in Response", response.text[:200]
             
     except requests.exceptions.Timeout:
-        print("GET-LAST Timeout nach 30s")
-        return 408, "Timeout", None
+        return None, "Timeout nach 30s", None
     except Exception as e:
-        print(f"GET-LAST Exception: {str(e)}")
-        return 500, f"Error: {str(e)}", None
+        return None, f"Exception: {str(e)}", None
+
+
+def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
+    """
+    Erwartet jetzt Contract-Format von n8n
+    """
+    print(f"\nNEW-ANALYSIS für {tenant_id}")
+    
+    url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
+    print(f"NEW-ANALYSIS URL: {url}")
+    
+    # Datei vorbereiten
+    filename, file_content, file_type = file_info
+    base64_content = base64.b64encode(file_content).decode('utf-8')
+    
+    payload = {
+        "tenant_id": tenant_id,
+        "uuid": uuid_str,
+        "action": "analyze_with_deepseek",
+        "file": {
+            "filename": filename,
+            "content_type": file_type,
+            "data": base64_content
+        }
+    }
+    
+    headers = {'Content-Type': 'application/json'}
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        print(f"Response Status: {response.status_code}")
+        
+        if response.status_code != 200:
+            return None, f"HTTP {response.status_code}", response.text[:200]
+        
+        try:
+            json_response = response.json()
+            print(f"Response Typ: {type(json_response)}")
+            
+            # NEU: Contract-Format erkennen
+            if isinstance(json_response, dict) and 'data' in json_response:
+                # Contract-Format erkannt
+                contract = json_response
+                print(f"✅ Contract Format erkannt, Status: {contract.get('status')}")
+                
+                if contract.get('status') == 'success' and contract.get('count', 0) > 0:
+                    # Extrahiere die Business-Daten aus data.metrics
+                    data = contract['data']
+                    
+                    # Kombiniere metrics mit den anderen Feldern
+                    business_data = data['metrics'].copy() if 'metrics' in data else {}
+                    business_data['recommendations'] = data.get('recommendations', [])
+                    business_data['customer_message'] = data.get('customer_message', '')
+                    business_data['analysis_date'] = data.get('analysis_date', '')
+                    business_data['tenant_id'] = contract.get('tenant_id', tenant_id)
+                    
+                    return business_data, "Success", None
+                else:
+                    return None, f"Fehler im Contract (Status: {contract.get('status')})", json_response
+            else:
+                # Altes Format (Fallback)
+                print("⚠️ Altes Format, versuche direkte Business-Daten")
+                if isinstance(json_response, dict) and any(key in json_response for key in ["belegt", "frei", "belegungsgrad"]):
+                    return json_response, "Success (altes Format)", None
+                else:
+                    return None, "Ungültiges Format", json_response
+            
+        except json.JSONDecodeError:
+            return None, "Kein JSON in Response", response.text[:200]
+            
+    except Exception as e:
+        return None, f"Exception: {str(e)}", None
+
+def merge_contract_data(contract_data):
+    """
+    Hilfsfunktion: Kombiniert metrics mit den anderen Feldern aus einem Contract
+    """
+    if not contract_data or not isinstance(contract_data, dict):
+        return None
+    
+    # Wenn es schon Business-Daten sind (direktes Format)
+    if 'belegt' in contract_data:
+        return contract_data
+    
+    # Wenn es ein Contract ist
+    if 'data' in contract_data:
+        data = contract_data['data']
+        result = {}
+        
+        # Füge metrics hinzu
+        if 'metrics' in data and isinstance(data['metrics'], dict):
+            result.update(data['metrics'])
+        
+        # Füge andere Felder hinzu
+        for key in ['recommendations', 'customer_message', 'analysis_date']:
+            if key in data:
+                result[key] = data[key]
+        
+        # Füge tenant_id hinzu
+        if 'tenant_id' in contract_data:
+            result['tenant_id'] = contract_data['tenant_id']
+        
+        return result
+    
+    return None
 
 def standardize_get_last_response(raw_response, tenant_id):
     """
