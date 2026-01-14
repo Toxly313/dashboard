@@ -11,7 +11,6 @@ import base64
 import requests
 import json
 
-# Nach den Import-Statements, vor den Funktionen hinzufügen:
 class N8NResponseValidator:
     """Zentrale Klasse zur Validierung von n8n-Responses"""
     
@@ -19,99 +18,81 @@ class N8NResponseValidator:
     def validate_response(response):
         """
         Validiert und normalisiert n8n-Responses auf ein einheitliches Format.
-        Erwartet Format: {
-            "status": "success",
-            "data": {
-                "metrics": {...},
-                "recommendations": [...],
-                "customer_message": "...",
-                "analysis_date": "..."
-            }
-        }
+        Akzeptiert verschiedene Input-Formate:
+        1. Standard-Format: {"status": "success", "data": {...}}
+        2. Direktes Data-Format: {"metrics": {...}, "recommendations": [...]}
+        3. Supabase-Format: [{"metrics": "json_string", ...}, ...]
+        4. Legacy-Format: {"current_analysis": {...}, "previous_analysis": {...}}
         """
         if not response:
+            print("Leere Response in Validator")
             return None, "Leere Response erhalten"
         
-        # Fall 1: Response ist bereits im korrekten Format
+        # Fall 1: Standard-Format mit data wrapper
         if isinstance(response, dict) and "data" in response:
+            print("Validator: Standard-Format erkannt")
             data = response.get("data", {})
-            if isinstance(data.get("metrics"), dict):
+            if isinstance(data, dict):
                 return data, None
-            return None, "Ungültiges Data-Format"
+            return None, "Data-Feld ist kein Dictionary"
         
-        # Fall 2: Legacy Format (direkte Business-Daten)
-        if isinstance(response, dict) and any(key in response for key in 
-                                           ['belegt', 'frei', 'belegungsgrad', 
-                                            'metrics', 'current_analysis']):
+        # Fall 2: Direktes Format (ohne data wrapper)
+        if isinstance(response, dict):
+            print("Validator: Direktes Format erkannt")
             
-            # Extrahiere Metrics aus verschiedenen Legacy-Formaten
+            # Extrahiere Metriken aus verschiedenen möglichen Feldern
             metrics = {}
+            recommendations = []
+            customer_message = ""
+            analysis_date = datetime.now().isoformat()
             
-            # Format: {"metrics": {...}, ...}
-            if "metrics" in response and isinstance(response["metrics"], dict):
+            # Suche nach Metriken
+            if "metrics" in response:
                 metrics = response["metrics"]
-            # Format: {"current_analysis": {"metrics": {...}, ...}}
-            elif "current_analysis" in response:
-                current = response["current_analysis"]
-                if isinstance(current.get("metrics"), dict):
-                    metrics = current["metrics"]
-                else:
-                    metrics = current  # Fallback
-            # Format: direkte Business-Daten
-            else:
+            elif "analysis_result" in response:
+                analysis_result = response["analysis_result"]
+                if isinstance(analysis_result, dict):
+                    metrics = analysis_result.get("metrics", analysis_result)
+            elif any(key in response for key in ["belegt", "frei", "belegungsgrad"]):
+                # Direkte Business-Daten
                 metrics = response
+            else:
+                return None, "Keine Metriken gefunden"
             
-            # Erstelle standardisiertes Data-Objekt
-            normalized_data = {
-                "metrics": metrics,
-                "recommendations": response.get("recommendations", []),
-                "customer_message": response.get("customer_message", 
-                                               response.get("summary", 
-                                                          "Analyse abgeschlossen")),
-                "analysis_date": response.get("analysis_date", 
-                                            response.get("timestamp", 
-                                                       datetime.now().isoformat()))
+            # Extrahiere andere Felder
+            recommendations = response.get("recommendations", response.get("recommendation_list", []))
+            customer_message = response.get("customer_message", response.get("summary", ""))
+            analysis_date = response.get("analysis_date", 
+                                       response.get("timestamp", 
+                                                   response.get("processed_at", 
+                                                              datetime.now().isoformat())))
+            
+            # Stelle sicher, dass metrics ein Dict ist
+            if isinstance(metrics, str):
+                try:
+                    metrics = json.loads(metrics)
+                except json.JSONDecodeError:
+                    return None, "Metrics ist ungültiger JSON-String"
+            
+            data = {
+                "metrics": metrics if isinstance(metrics, dict) else {},
+                "recommendations": recommendations if isinstance(recommendations, list) else [],
+                "customer_message": customer_message or "Analyse geladen",
+                "analysis_date": analysis_date
             }
             
-            return normalized_data, None
+            return data, None
         
-        # Fall 3: Response ist eine Liste
-        if isinstance(response, list) and len(response) > 0:
-            # Rekursive Validierung des ersten Elements
-            return N8NResponseValidator.validate_response(response[0])
+        # Fall 3: Liste (Supabase-Format)
+        if isinstance(response, list):
+            print(f"Validator: Listen-Format mit {len(response)} Elementen")
+            if len(response) > 0:
+                # Rekursive Validierung des ersten Elements
+                return N8NResponseValidator.validate_response(response[0])
+            return None, "Leere Liste"
         
+        # Fall 4: Unbekanntes Format
         return None, f"Unbekanntes Response-Format: {type(response)}"
-    
-    @staticmethod
-    def extract_from_supabase_row(row):
-        """
-        Extrahiert Daten aus Supabase-Row-Format
-        Format: {"analysis_result": {...}, ...} oder {"rows": [...]}
-        """
-        if not isinstance(row, dict):
-            return None
-        
-        # Supabase Format mit rows
-        if "rows" in row and isinstance(row["rows"], list):
-            if len(row["rows"]) > 0:
-                return N8NResponseValidator.validate_response(row["rows"][0])
-        
-        # Supabase Format mit analysis_result
-        if "analysis_result" in row:
-            result = row["analysis_result"]
-            if isinstance(result, dict):
-                normalized = {
-                    "metrics": result.get("metrics", result),
-                    "recommendations": result.get("recommendations", []),
-                    "customer_message": result.get("customer_message", ""),
-                    "analysis_date": result.get("processed_at", 
-                                               row.get("updated_at", 
-                                                     row.get("created_at", 
-                                                           datetime.now().isoformat())))
-                }
-                return normalized, None
-        
-        return None, "Kein gültiges Supabase-Format"
 
 # PORT FIX
 if 'PORT' in os.environ:
@@ -141,61 +122,172 @@ DEFAULT_DATA = {
 # HILFSFUNKTIONEN
 def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
     """
-    Sendet GET-LAST Request an den einfachen Workflow
-    Pfad: /get-last-analysis-only
+    Holt die letzte Analyse aus Supabase
+    Gibt standardisiertes Format zurück
     """
     print(f"\nGET-LAST Request für Tenant: {tenant_id}")
     
-    # Vollständige URL bauen
     url = f"{base_url.rstrip('/')}/get-last-analysis-only"
     print(f"GET-LAST URL: {url}")
     
     payload = {
-        "tenant_id": tenant_id, 
-        "uuid": uuid_str, 
-        "action": "analyze", 
-        "mode": "get_last",
+        "tenant_id": tenant_id,
+        "uuid": uuid_str,
+        "action": "get_last_analysis",
         "metadata": {
-            "source": "streamlit", 
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+            "source": "streamlit",
+            "timestamp": datetime.now().isoformat(),
             "purpose": "load_last_analysis"
         }
     }
+    
     headers = {'Content-Type': 'application/json'}
+    
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=30)
         print(f"GET-LAST Response Status: {response.status_code}")
+        
         if response.status_code != 200:
             return response.status_code, f"HTTP {response.status_code}", None
+        
         try:
             json_response = response.json()
-            print(f"GET-LAST JSON erhalten")
-            return response.status_code, "Success", json_response
+            print(f"GET-LAST JSON erhalten: {type(json_response)}")
+            
+            # ====== WICHTIG: Standardisiere die Response ======
+            standardized_response = standardize_get_last_response(json_response, tenant_id)
+            
+            return response.status_code, "Success", standardized_response
         except json.JSONDecodeError:
             print(f"Kein JSON in GET-LAST Response: {response.text[:200]}")
-            return response.status_code, "No JSON", response.text
+            return response.status_code, "No JSON", None
+            
     except requests.exceptions.Timeout:
         print("GET-LAST Timeout nach 30s")
         return 408, "Timeout", None
     except Exception as e:
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
+
+def standardize_get_last_response(raw_response, tenant_id):
+    """
+    Standardisiert die Response von /get-last-analysis-only
+    Transformiert Supabase-Format in unser Standard-Format
+    """
+    print(f"Standardizing response of type: {type(raw_response)}")
+    
+    # Fall 1: Response ist bereits im Standard-Format
+    if isinstance(raw_response, dict) and "data" in raw_response:
+        print("Response bereits im Standard-Format")
+        return raw_response
+    
+    # Fall 2: Supabase Row-Format (Array mit rows)
+    if isinstance(raw_response, list) and len(raw_response) > 0:
+        print(f"Response ist Liste mit {len(raw_response)} Elementen")
+        
+        # Nimm die neueste (letzte) Analyse
+        latest_analysis = raw_response[-1]
+        
+        # Extrahiere Metriken aus verschiedenen Feldern
+        metrics_data = {}
+        recommendations = []
+        customer_message = ""
+        analysis_date = datetime.now().isoformat()
+        
+        # WICHTIG: Metriken könnten in verschiedenen Feldern sein
+        if "metrics" in latest_analysis:
+            # Metriken als String oder Dict?
+            metrics_field = latest_analysis["metrics"]
+            
+            if isinstance(metrics_field, str):
+                # JSON-String parsen
+                try:
+                    metrics_data = json.loads(metrics_field)
+                    print("Metriken aus JSON-String geparsed")
+                except json.JSONDecodeError as e:
+                    print(f"Fehler beim Parsen von metrics JSON: {e}")
+                    metrics_data = {}
+            elif isinstance(metrics_field, dict):
+                metrics_data = metrics_field
+                print("Metriken als Dict erhalten")
+            else:
+                print(f"Unbekannter metrics Typ: {type(metrics_field)}")
+        
+        # Prüfe auch analysis_result Feld
+        elif "analysis_result" in latest_analysis and latest_analysis["analysis_result"]:
+            analysis_result = latest_analysis["analysis_result"]
+            if isinstance(analysis_result, dict):
+                if "metrics" in analysis_result:
+                    metrics_data = analysis_result["metrics"]
+                else:
+                    metrics_data = analysis_result
+                print("Metriken aus analysis_result extrahiert")
+        
+        # Extrahiere Timestamp
+        if "updated_at" in latest_analysis:
+            analysis_date = latest_analysis["updated_at"]
+        elif "created_at" in latest_analysis:
+            analysis_date = latest_analysis["created_at"]
+        
+        # Erstelle standardisiertes Format
+        standardized = {
+            "status": "success",
+            "data": {
+                "metrics": metrics_data,
+                "recommendations": recommendations,
+                "customer_message": customer_message or f"Letzte Analyse geladen für {tenant_id}",
+                "analysis_date": analysis_date,
+                "tenant_id": tenant_id,
+                "source": "supabase",
+                "row_id": latest_analysis.get("id", ""),
+                "file_name": latest_analysis.get("file_name", "")
+            }
+        }
+        
+        print(f"Standardisierte Response erstellt mit {len(metrics_data)} Metriken")
+        return standardized
+    
+    # Fall 3: Direkte Metrics im Root
+    elif isinstance(raw_response, dict):
+        # Prüfe ob es Business-Metriken enthält
+        if any(key in raw_response for key in ["belegt", "frei", "belegungsgrad", "vertragsdauer_durchschnitt"]):
+            standardized = {
+                "status": "success",
+                "data": {
+                    "metrics": raw_response,
+                    "recommendations": raw_response.get("recommendations", []),
+                    "customer_message": raw_response.get("customer_message", "Letzte Analyse geladen"),
+                    "analysis_date": raw_response.get("timestamp", datetime.now().isoformat()),
+                    "tenant_id": tenant_id,
+                    "source": "direct"
+                }
+            }
+            return standardized
+    
+    # Fall 4: Leer oder unbekannt
+    print(f"Unbekanntes Response-Format: {type(raw_response)}")
+    return {
+        "status": "success",
+        "data": {
+            "metrics": {},
+            "recommendations": [],
+            "customer_message": "Keine vorherige Analyse gefunden",
+            "analysis_date": datetime.now().isoformat(),
+            "tenant_id": tenant_id,
+            "source": "empty"
+        }
+    }
         
 def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
-    """
-    Sendet NEW-ANALYSIS Request an den KI-Workflow
-    Erwartet standardisierte Response von n8n
-    """
-    print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
+    """Vereinfachte Version - erwartet standardisiertes Format von n8n"""
+    print(f"\nNEW-ANALYSIS für {tenant_id}")
     
     url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
-    print(f"NEW-ANALYSIS URL: {url}")
     
     # Datei vorbereiten
     filename, file_content, file_type = file_info
     base64_content = base64.b64encode(file_content).decode('utf-8')
     
-    # STANDARDISIERTES Payload-Format
     payload = {
         "tenant_id": tenant_id,
         "uuid": uuid_str,
@@ -206,17 +298,16 @@ def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
             "data": base64_content
         },
         "metadata": {
-            "source": "streamlit_dashboard",
-            "timestamp": datetime.now().isoformat(),
-            "version": "1.0"
+            "source": "streamlit",
+            "timestamp": datetime.now().isoformat()
         }
     }
     
     headers = {'Content-Type': 'application/json'}
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
-        print(f"NEW-ANALYSIS Response Status: {response.status_code}")
+        response = requests.post(url, json=payload, headers=headers, timeout=120)  # 2 Minuten Timeout für KI
+        print(f"Response Status: {response.status_code}")
         
         if response.status_code != 200:
             return {
@@ -228,41 +319,50 @@ def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
         
         try:
             json_response = response.json()
-            print(f"NEW-ANALYSIS JSON erhalten: {type(json_response)}")
+            print(f"Response Type: {type(json_response)}")
             
-            # VALIDIERE die Response
-            validated_data, error_msg = N8NResponseValidator.validate_response(json_response)
+            # ====== WICHTIG: Standardisiere die Response ======
+            # n8n sollte immer {"status": "success", "data": {...}} zurückgeben
+            # Falls nicht, baue es selbst
             
-            if validated_data:
-                return {
-                    "status": "success",
-                    "code": 200,
-                    "message": "Analyse erfolgreich",
-                    "data": validated_data
-                }
+            if isinstance(json_response, dict) and "status" in json_response:
+                # Bereits standardisiert
+                standardized = json_response
             else:
-                return {
-                    "status": "error",
-                    "code": 422,  # Unprocessable Entity
-                    "message": f"Ungültiges Response-Format: {error_msg}",
-                    "data": None
-                }
+                # Baue Standard-Format
+                validated_data, error = N8NResponseValidator.validate_response(json_response)
                 
+                if validated_data:
+                    standardized = {
+                        "status": "success",
+                        "data": validated_data
+                    }
+                else:
+                    standardized = {
+                        "status": "error",
+                        "data": {
+                            "metrics": {},
+                            "recommendations": [],
+                            "customer_message": f"Validierungsfehler: {error}",
+                            "analysis_date": datetime.now().isoformat()
+                        }
+                    }
+            
+            return {
+                "status": "success",
+                "code": 200,
+                "message": "Analyse erfolgreich",
+                "data": standardized.get("data", {}) if standardized.get("status") == "success" else None
+            }
+            
         except json.JSONDecodeError:
             return {
                 "status": "error",
                 "code": 500,
-                "message": f"Kein JSON in Response: {response.text[:200]}",
+                "message": f"Kein JSON: {response.text[:200]}",
                 "data": None
             }
             
-    except requests.exceptions.Timeout:
-        return {
-            "status": "error",
-            "code": 408,
-            "message": "Timeout nach 60s",
-            "data": None
-        }
     except Exception as e:
         return {
             "status": "error",
@@ -361,7 +461,7 @@ def create_timeseries_chart(history_data, metric_key, title):
     return fig
 
 def load_last_analysis():
-    """Lädt die letzte Analyse mit standardisiertem Format"""
+    """Lädt die letzte Analyse - robust und einfach"""
     if not st.session_state.logged_in:
         return False
 
@@ -375,53 +475,98 @@ def load_last_analysis():
         return True
 
     with st.spinner("Lade letzte Analyse..."):
+        # Rufe n8n Endpoint auf
         status, message, response = post_to_n8n_get_last(
             n8n_base_url, tenant_id, str(uuid.uuid4())
         )
-
-        # Fehlerbehandlung
-        if status != 200 or response is None:
+        
+        # Debug-Info
+        if st.session_state.debug_mode:
+            with st.expander("Debug: GET-LAST Response", expanded=False):
+                st.write(f"Status Code: {status}")
+                st.write(f"Message: {message}")
+                st.write("Raw Response:")
+                st.json(response if response else {})
+        
+        # Fallback bei Fehlern
+        if status != 200 or not response:
+            st.info("⚠️ Keine vorherige Analyse gefunden oder Server-Fehler. Verwende Standarddaten.")
             st.session_state.current_data = DEFAULT_DATA.copy()
             st.session_state.before_analysis = DEFAULT_DATA.copy()
-            st.info("Keine vorherige Analyse gefunden. Verwende Standarddaten.")
             return True
-
-        # VALIDIERUNG mit der neuen Klasse
+        
+        # Validiere Response
         validated_data, error_msg = N8NResponseValidator.validate_response(response)
         
-        if validated_data:
-            # MERGE mit Defaults für fehlende Felder
-            loaded_data = DEFAULT_DATA.copy()
-            
-            # WICHTIG: Wir überschreiben NUR die tatsächlich vorhandenen Metrics
-            if "metrics" in validated_data:
-                for key, value in validated_data["metrics"].items():
-                    if key in loaded_data:
-                        loaded_data[key] = value
-            
-            # Sonderfälle
-            if "kundenherkunft" in validated_data.get("metrics", {}):
-                loaded_data["kundenherkunft"] = validated_data["metrics"]["kundenherkunft"]
-            elif "kundenherkunft" in validated_data:
-                loaded_data["kundenherkunft"] = validated_data["kundenherkunft"]
-            
-            # Empfehlungen und Message
-            loaded_data["recommendations"] = validated_data.get("recommendations", [])
-            loaded_data["customer_message"] = validated_data.get("customer_message", "")
-            loaded_data["analysis_date"] = validated_data.get("analysis_date", datetime.now().isoformat())
-            loaded_data["tenant_id"] = tenant_id
-
-            st.session_state.current_data = loaded_data
-            st.session_state.before_analysis = loaded_data.copy()
-            st.session_state.last_analysis_loaded = True
-            
-            st.success(f"Letzte Analyse vom {loaded_data['analysis_date'][:10]} geladen!")
-            return True
-        else:
-            st.warning(f"Letzte Analyse hat ungültiges Format: {error_msg}")
+        if not validated_data:
+            st.warning(f"⚠️ Ungültiges Format: {error_msg}. Verwende Standarddaten.")
             st.session_state.current_data = DEFAULT_DATA.copy()
             st.session_state.before_analysis = DEFAULT_DATA.copy()
             return True
+        
+        # ====== MERGE LOGIK ======
+        # Starte mit DEFAULT_DATA
+        loaded_data = DEFAULT_DATA.copy()
+        
+        # Extrahiere Metriken
+        metrics = validated_data.get("metrics", {})
+        
+        # WICHTIG: Konvertiere alle Werte zu richtigen Typen
+        def safe_convert(value):
+            """Konvertiert Werte sicher zu int/float"""
+            if isinstance(value, (int, float)):
+                return value
+            if isinstance(value, str):
+                try:
+                    # Versuche Float, dann Int
+                    return float(value)
+                except:
+                    try:
+                        return int(value)
+                    except:
+                        return value
+            return value
+        
+        # Übernehme alle Metriken aus der validierten Response
+        for key, value in metrics.items():
+            if key in loaded_data:
+                loaded_data[key] = safe_convert(value)
+        
+        # Spezielle Felder (können in metrics oder direkt sein)
+        if "kundenherkunft" in metrics:
+            loaded_data["kundenherkunft"] = metrics["kundenherkunft"]
+        elif "kundenherkunft" in validated_data:
+            loaded_data["kundenherkunft"] = validated_data["kundenherkunft"]
+        
+        if "zahlungsstatus" in metrics:
+            loaded_data["zahlungsstatus"] = metrics["zahlungsstatus"]
+        elif "zahlungsstatus" in validated_data:
+            loaded_data["zahlungsstatus"] = validated_data["zahlungsstatus"]
+        
+        # Empfehlungen und Message
+        loaded_data["recommendations"] = validated_data.get("recommendations", [])
+        loaded_data["customer_message"] = validated_data.get("customer_message", 
+                                                           f"Letzte Analyse für {tenant_id} geladen")
+        
+        # Analysis Date
+        loaded_data["analysis_date"] = validated_data.get("analysis_date", datetime.now().isoformat())
+        loaded_data["tenant_id"] = tenant_id
+        
+        # Debug-Info
+        if st.session_state.debug_mode:
+            with st.expander("Debug: Geladene Daten", expanded=False):
+                st.write("Validierte Daten:")
+                st.json(validated_data)
+                st.write("Geladene Daten (nach Merge):")
+                st.json({k: v for k, v in loaded_data.items() if k in DEFAULT_DATA})
+        
+        # In Session State speichern
+        st.session_state.current_data = loaded_data
+        st.session_state.before_analysis = loaded_data.copy()
+        st.session_state.last_analysis_loaded = True
+        
+        st.success(f"✅ Letzte Analyse vom {loaded_data['analysis_date'][:10]} geladen!")
+        return True
 
 
 def perform_analysis(uploaded_files):
