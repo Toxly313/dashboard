@@ -154,6 +154,9 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
             json_response = response.json()
             print(f"GET-LAST JSON erhalten: {type(json_response)}")
             
+            # Debug-Ausgabe
+            debug_supabase_response(json_response)
+            
             # ====== WICHTIG: Standardisiere die Response ======
             standardized_response = standardize_get_last_response(json_response, tenant_id)
             
@@ -168,7 +171,6 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
     except Exception as e:
         print(f"GET-LAST Exception: {str(e)}")
         return 500, f"Error: {str(e)}", None
-
 def standardize_get_last_response(raw_response, tenant_id):
     """
     Standardisiert die Response von /get-last-analysis-only
@@ -176,10 +178,25 @@ def standardize_get_last_response(raw_response, tenant_id):
     """
     print(f"Standardizing response of type: {type(raw_response)}")
     
-    # Fall 1: Response ist bereits im Standard-Format
+    # Fall 0: Response ist bereits im Standard-Format mit data
     if isinstance(raw_response, dict) and "data" in raw_response:
-        print("Response bereits im Standard-Format")
+        print("Response bereits im Standard-Format mit data")
         return raw_response
+    
+    # Fall 1: Response hat direkt "metrics" (wie dein Beispiel)
+    if isinstance(raw_response, dict) and "metrics" in raw_response:
+        print("Response hat direkt metrics-Feld")
+        return {
+            "status": "success",
+            "data": {
+                "metrics": raw_response.get("metrics", {}),
+                "recommendations": raw_response.get("recommendations", []),
+                "customer_message": raw_response.get("customer_message", "Letzte Analyse geladen"),
+                "analysis_date": raw_response.get("timestamp", datetime.now().isoformat()),
+                "tenant_id": tenant_id,
+                "source": "direct_metrics"
+            }
+        }
     
     # Fall 2: Supabase Row-Format (Array mit rows)
     if isinstance(raw_response, list) and len(raw_response) > 0:
@@ -206,12 +223,17 @@ def standardize_get_last_response(raw_response, tenant_id):
                     print("Metriken aus JSON-String geparsed")
                 except json.JSONDecodeError as e:
                     print(f"Fehler beim Parsen von metrics JSON: {e}")
-                    metrics_data = {}
+                    # Fallback: Versuche, das ganze Objekt als Dict zu extrahieren
+                    metrics_data = {k: v for k, v in latest_analysis.items() 
+                                  if k not in ["id", "tenant_id", "file_name", "created_at", "updated_at", "status"]}
             elif isinstance(metrics_field, dict):
                 metrics_data = metrics_field
                 print("Metriken als Dict erhalten")
             else:
                 print(f"Unbekannter metrics Typ: {type(metrics_field)}")
+                # Fallback: Nutze das ganze Objekt
+                metrics_data = {k: v for k, v in latest_analysis.items() 
+                              if k not in ["id", "tenant_id", "file_name", "created_at", "updated_at", "status"]}
         
         # Prüfe auch analysis_result Feld
         elif "analysis_result" in latest_analysis and latest_analysis["analysis_result"]:
@@ -229,6 +251,19 @@ def standardize_get_last_response(raw_response, tenant_id):
         elif "created_at" in latest_analysis:
             analysis_date = latest_analysis["created_at"]
         
+        # Extrahiere Empfehlungen und Message
+        if "analysis_result" in latest_analysis and latest_analysis["analysis_result"]:
+            if isinstance(latest_analysis["analysis_result"], dict):
+                analysis_result = latest_analysis["analysis_result"]
+                recommendations = analysis_result.get("recommendations", [])
+                customer_message = analysis_result.get("customer_message", "")
+        
+        # WICHTIG: Berechne belegungsgrad neu, falls belegt und frei vorhanden sind
+        if "belegt" in metrics_data and "frei" in metrics_data:
+            total = metrics_data.get("belegt", 0) + metrics_data.get("frei", 0)
+            if total > 0:
+                metrics_data["belegungsgrad"] = round((metrics_data.get("belegt", 0) / total) * 100, 1)
+        
         # Erstelle standardisiertes Format
         standardized = {
             "status": "success",
@@ -245,21 +280,30 @@ def standardize_get_last_response(raw_response, tenant_id):
         }
         
         print(f"Standardisierte Response erstellt mit {len(metrics_data)} Metriken")
+        print(f"Enthaltene Keys: {list(metrics_data.keys())}")
         return standardized
     
-    # Fall 3: Direkte Metrics im Root
+    # Fall 3: Direkte Business-Daten im Root
     elif isinstance(raw_response, dict):
         # Prüfe ob es Business-Metriken enthält
         if any(key in raw_response for key in ["belegt", "frei", "belegungsgrad", "vertragsdauer_durchschnitt"]):
+            metrics_data = {}
+            # Kopiere alle relevanten Felder
+            for key in ["belegt", "frei", "vertragsdauer_durchschnitt", "reminder_automat", 
+                       "social_facebook", "social_google", "belegungsgrad", "kundenherkunft", 
+                       "zahlungsstatus", "neukunden_labels", "neukunden_monat"]:
+                if key in raw_response:
+                    metrics_data[key] = raw_response[key]
+            
             standardized = {
                 "status": "success",
                 "data": {
-                    "metrics": raw_response,
+                    "metrics": metrics_data,
                     "recommendations": raw_response.get("recommendations", []),
                     "customer_message": raw_response.get("customer_message", "Letzte Analyse geladen"),
                     "analysis_date": raw_response.get("timestamp", datetime.now().isoformat()),
                     "tenant_id": tenant_id,
-                    "source": "direct"
+                    "source": "direct_business"
                 }
             }
             return standardized
@@ -459,7 +503,6 @@ def create_timeseries_chart(history_data, metric_key, title):
     fig = go.Figure(data=[go.Scatter(x=dates, y=values, mode='lines+markers', name=title)])
     fig.update_layout(title=f"Entwicklung: {title}", height=300, xaxis_title="Datum", yaxis_title=title)
     return fig
-
 def load_last_analysis():
     """Lädt die letzte Analyse - robust und einfach"""
     if not st.session_state.logged_in:
@@ -504,33 +547,36 @@ def load_last_analysis():
             st.session_state.before_analysis = DEFAULT_DATA.copy()
             return True
         
-        # ====== MERGE LOGIK ======
+        # ====== VERBESSERTE MERGE LOGIK ======
         # Starte mit DEFAULT_DATA
         loaded_data = DEFAULT_DATA.copy()
         
         # Extrahiere Metriken
         metrics = validated_data.get("metrics", {})
         
-        # WICHTIG: Konvertiere alle Werte zu richtigen Typen
-        def safe_convert(value):
-            """Konvertiert Werte sicher zu int/float"""
-            if isinstance(value, (int, float)):
-                return value
-            if isinstance(value, str):
-                try:
-                    # Versuche Float, dann Int
-                    return float(value)
-                except:
-                    try:
-                        return int(value)
-                    except:
-                        return value
-            return value
+        # WICHTIG: Berechne belegungsgrad neu, falls belegt und frei vorhanden sind
+        if "belegt" in metrics and "frei" in metrics:
+            total = metrics.get("belegt", 0) + metrics.get("frei", 0)
+            if total > 0:
+                metrics["belegungsgrad"] = round((metrics.get("belegt", 0) / total) * 100, 1)
         
-        # Übernehme alle Metriken aus der validierten Response
+        # Debug: Zeige alle extrahierten Metriken
+        if st.session_state.debug_mode:
+            print(f"Extrahierte Metriken: {list(metrics.keys())}")
+            print(f"Belegt: {metrics.get('belegt', 'Nicht gefunden')}")
+            print(f"Frei: {metrics.get('frei', 'Nicht gefunden')}")
+        
+        # Übernehme ALLE verfügbaren Metriken (nicht nur die in DEFAULT_DATA)
         for key, value in metrics.items():
+            # Konvertiere Wert
+            converted_value = safe_convert(value)
+            
+            # Wenn der Key in DEFAULT_DATA ist, ersetze ihn
             if key in loaded_data:
-                loaded_data[key] = safe_convert(value)
+                loaded_data[key] = converted_value
+            # Ansonsten füge ihn hinzu (für spätere Verwendung)
+            else:
+                loaded_data[key] = converted_value
         
         # Spezielle Felder (können in metrics oder direkt sein)
         if "kundenherkunft" in metrics:
@@ -557,7 +603,9 @@ def load_last_analysis():
             with st.expander("Debug: Geladene Daten", expanded=False):
                 st.write("Validierte Daten:")
                 st.json(validated_data)
-                st.write("Geladene Daten (nach Merge):")
+                st.write("Extrahierte Metriken:")
+                st.json(metrics)
+                st.write("Final geladene Daten:")
                 st.json({k: v for k, v in loaded_data.items() if k in DEFAULT_DATA})
         
         # In Session State speichern
@@ -568,6 +616,21 @@ def load_last_analysis():
         st.success(f"✅ Letzte Analyse vom {loaded_data['analysis_date'][:10]} geladen!")
         return True
 
+def safe_convert(value):
+    """Konvertiert Werte sicher zu int/float"""
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        try:
+            # Versuche Float, dann Int
+            return float(value)
+        except:
+            try:
+                return int(value)
+            except:
+                return value
+    # Für Listen und Dictionaries
+    return value
 
 def perform_analysis(uploaded_files):
     """Führt KI-Analyse mit robustem Error-Handling durch"""
