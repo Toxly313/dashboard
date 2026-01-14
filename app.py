@@ -120,57 +120,89 @@ DEFAULT_DATA = {
 }
 
 # HILFSFUNKTIONEN
-def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
+def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
     """
-    Holt die letzte Analyse aus Supabase
-    Gibt standardisiertes Format zurück
+    Sendet NEW-ANALYSIS Request - vereinfachte Version
     """
-    print(f"\nGET-LAST Request für Tenant: {tenant_id}")
+    print(f"\nNEW-ANALYSIS Request für Tenant: {tenant_id}")
     
-    url = f"{base_url.rstrip('/')}/get-last-analysis-only"
-    print(f"GET-LAST URL: {url}")
+    url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
+    print(f"NEW-ANALYSIS URL: {url}")
+    
+    # Extrahiere Dateiinformationen
+    filename, file_content, file_type = file_info
+    
+    # Kodiere Dateiinhalt
+    base64_content = base64.b64encode(file_content).decode('utf-8')
     
     payload = {
         "tenant_id": tenant_id,
+        "mode": "new_analysis",
+        "action": "analyze",
         "uuid": uuid_str,
-        "action": "get_last_analysis",
         "metadata": {
-            "source": "streamlit",
-            "timestamp": datetime.now().isoformat(),
-            "purpose": "load_last_analysis"
+            "source": "streamlit", 
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), 
+            "purpose": "new_analysis"
+        },
+        "file": {
+            "filename": filename,
+            "content_type": file_type,
+            "data": base64_content
         }
     }
     
     headers = {'Content-Type': 'application/json'}
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        print(f"GET-LAST Response Status: {response.status_code}")
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        print(f"NEW-ANALYSIS Response Status: {response.status_code}")
         
         if response.status_code != 200:
-            return response.status_code, f"HTTP {response.status_code}", None
+            return {
+                "status": "error",
+                "code": response.status_code,
+                "message": f"HTTP {response.status_code}",
+                "data": None
+            }
         
         try:
             json_response = response.json()
-            print(f"GET-LAST JSON erhalten: {type(json_response)}")
+            print(f"NEW-ANALYSIS JSON erhalten")
             
-            # Debug-Ausgabe
-            debug_supabase_response(json_response)
-            
-            # ====== WICHTIG: Standardisiere die Response ======
-            standardized_response = standardize_get_last_response(json_response, tenant_id)
-            
-            return response.status_code, "Success", standardized_response
+            # EINFACHE Verarbeitung - nimm was immer kommt
+            return {
+                "status": "success",
+                "code": 200,
+                "message": "Analyse erfolgreich",
+                "data": json_response  # Rohdaten, werden später verarbeitet
+            }
         except json.JSONDecodeError:
-            print(f"Kein JSON in GET-LAST Response: {response.text[:200]}")
-            return response.status_code, "No JSON", None
+            print(f"Kein JSON: {response.text[:200]}")
+            return {
+                "status": "error",
+                "code": 500,
+                "message": "Kein JSON in Response",
+                "data": None
+            }
             
     except requests.exceptions.Timeout:
-        print("GET-LAST Timeout nach 30s")
-        return 408, "Timeout", None
+        print("Timeout nach 60s")
+        return {
+            "status": "error",
+            "code": 408,
+            "message": "Timeout",
+            "data": None
+        }
     except Exception as e:
-        print(f"GET-LAST Exception: {str(e)}")
-        return 500, f"Error: {str(e)}", None
+        print(f"Exception: {str(e)}")
+        return {
+            "status": "error",
+            "code": 500,
+            "message": f"Exception: {str(e)}",
+            "data": None
+        }
+        
 def standardize_get_last_response(raw_response, tenant_id):
     """
     Standardisiert die Response von /get-last-analysis-only
@@ -504,7 +536,7 @@ def create_timeseries_chart(history_data, metric_key, title):
     fig.update_layout(title=f"Entwicklung: {title}", height=300, xaxis_title="Datum", yaxis_title=title)
     return fig
 def load_last_analysis():
-    """Lädt die letzte Analyse - robust und einfach"""
+    """EINFACHE Version - lädt letzte Analyse direkt"""
     if not st.session_state.logged_in:
         return False
 
@@ -518,102 +550,132 @@ def load_last_analysis():
         return True
 
     with st.spinner("Lade letzte Analyse..."):
-        # Rufe n8n Endpoint auf
+        # Rufe n8n auf
         status, message, response = post_to_n8n_get_last(
             n8n_base_url, tenant_id, str(uuid.uuid4())
         )
         
-        # Debug-Info
+        # Debug
         if st.session_state.debug_mode:
-            with st.expander("Debug: GET-LAST Response", expanded=False):
-                st.write(f"Status Code: {status}")
-                st.write(f"Message: {message}")
-                st.write("Raw Response:")
+            with st.expander("Debug: GET-LAST Response", expanded=True):
+                st.write(f"Status: {status}, Message: {message}")
+                st.write("Response:")
                 st.json(response if response else {})
         
         # Fallback bei Fehlern
         if status != 200 or not response:
-            st.info("⚠️ Keine vorherige Analyse gefunden oder Server-Fehler. Verwende Standarddaten.")
+            st.info("⚠️ Keine vorherige Analyse gefunden. Verwende Standarddaten.")
             st.session_state.current_data = DEFAULT_DATA.copy()
             st.session_state.before_analysis = DEFAULT_DATA.copy()
             return True
         
-        # Validiere Response
-        validated_data, error_msg = N8NResponseValidator.validate_response(response)
-        
-        if not validated_data:
-            st.warning(f"⚠️ Ungültiges Format: {error_msg}. Verwende Standarddaten.")
-            st.session_state.current_data = DEFAULT_DATA.copy()
-            st.session_state.before_analysis = DEFAULT_DATA.copy()
-            return True
-        
-        # ====== VERBESSERTE MERGE LOGIK ======
-        # Starte mit DEFAULT_DATA
+        # ====== EINFACHE EXTRAKTION ======
+        # Starte mit Standarddaten
         loaded_data = DEFAULT_DATA.copy()
         
-        # Extrahiere Metriken
-        metrics = validated_data.get("metrics", {})
+        # Versuche Daten aus verschiedenen Response-Formaten zu extrahieren
+        data_to_extract = None
         
-        # WICHTIG: Berechne belegungsgrad neu, falls belegt und frei vorhanden sind
-        if "belegt" in metrics and "frei" in metrics:
-            total = metrics.get("belegt", 0) + metrics.get("frei", 0)
-            if total > 0:
-                metrics["belegungsgrad"] = round((metrics.get("belegt", 0) / total) * 100, 1)
-        
-        # Debug: Zeige alle extrahierten Metriken
-        if st.session_state.debug_mode:
-            print(f"Extrahierte Metriken: {list(metrics.keys())}")
-            print(f"Belegt: {metrics.get('belegt', 'Nicht gefunden')}")
-            print(f"Frei: {metrics.get('frei', 'Nicht gefunden')}")
-        
-        # Übernehme ALLE verfügbaren Metriken (nicht nur die in DEFAULT_DATA)
-        for key, value in metrics.items():
-            # Konvertiere Wert
-            converted_value = safe_convert(value)
+        # Fall 1: Supabase-Format mit rows
+        if isinstance(response, dict) and "rows" in response and isinstance(response["rows"], list) and len(response["rows"]) > 0:
+            latest_row = response["rows"][-1]  # Nimm neueste
+            print(f"Supabase-Format erkannt: {latest_row.get('id', '')}")
             
-            # Wenn der Key in DEFAULT_DATA ist, ersetze ihn
-            if key in loaded_data:
-                loaded_data[key] = converted_value
-            # Ansonsten füge ihn hinzu (für spätere Verwendung)
+            # Extrahiere metrics aus JSON-String
+            if "metrics" in latest_row and latest_row["metrics"]:
+                if isinstance(latest_row["metrics"], str):
+                    try:
+                        metrics_data = json.loads(latest_row["metrics"])
+                        data_to_extract = metrics_data
+                        print("Metrics aus JSON-String geparst")
+                    except:
+                        print("Konnte metrics JSON nicht parsen")
+                elif isinstance(latest_row["metrics"], dict):
+                    data_to_extract = latest_row["metrics"]
+                    print("Metrics als Dict erhalten")
+        
+        # Fall 2: Direkte metrics
+        elif isinstance(response, dict) and "metrics" in response:
+            data_to_extract = response["metrics"]
+            print("Direkte metrics erkannt")
+        
+        # Fall 3: Direkte Business-Daten
+        elif isinstance(response, dict) and any(key in response for key in ["belegt", "frei", "belegungsgrad"]):
+            data_to_extract = response
+            print("Direkte Business-Daten erkannt")
+        
+        # Fall 4: Liste mit einem Element
+        elif isinstance(response, list) and len(response) > 0:
+            first_item = response[0]
+            if isinstance(first_item, dict) and "metrics" in first_item:
+                data_to_extract = first_item["metrics"]
+                print("Liste mit metrics erkannt")
+            elif isinstance(first_item, dict):
+                data_to_extract = first_item
+                print("Liste mit Dict erkannt")
+        
+        # Daten extrahieren
+        if data_to_extract:
+            print(f"Daten zum Extrahieren gefunden: {list(data_to_extract.keys())[:5]}...")
+            
+            # Konvertiere sicher
+            def safe_convert(val):
+                if isinstance(val, (int, float)):
+                    return val
+                if isinstance(val, str):
+                    try:
+                        return float(val)
+                    except:
+                        try:
+                            return int(val)
+                        except:
+                            return val
+                return val
+            
+            # Übernehme alle verfügbaren Felder
+            for key in DEFAULT_DATA.keys():
+                if key in data_to_extract:
+                    loaded_data[key] = safe_convert(data_to_extract[key])
+            
+            # Spezielle Felder
+            if "kundenherkunft" in data_to_extract and isinstance(data_to_extract["kundenherkunft"], dict):
+                loaded_data["kundenherkunft"] = data_to_extract["kundenherkunft"]
+            
+            if "zahlungsstatus" in data_to_extract and isinstance(data_to_extract["zahlungsstatus"], dict):
+                loaded_data["zahlungsstatus"] = data_to_extract["zahlungsstatus"]
+            
+            # Berechne belegungsgrad falls nötig
+            if "belegt" in data_to_extract and "frei" in data_to_extract:
+                belegt = safe_convert(data_to_extract["belegt"])
+                frei = safe_convert(data_to_extract["frei"])
+                if belegt + frei > 0:
+                    loaded_data["belegungsgrad"] = round((belegt / (belegt + frei)) * 100, 1)
+            
+            # Empfehlungen und Message
+            if "recommendations" in response:
+                loaded_data["recommendations"] = response.get("recommendations", [])
+            if "customer_message" in response:
+                loaded_data["customer_message"] = response.get("customer_message", "")
+            
+            # Analysis Date
+            if "analysis_date" in response:
+                loaded_data["analysis_date"] = response["analysis_date"]
+            elif "timestamp" in response:
+                loaded_data["analysis_date"] = response["timestamp"]
             else:
-                loaded_data[key] = converted_value
+                loaded_data["analysis_date"] = datetime.now().isoformat()
+            
+            st.success(f"✅ Letzte Analyse geladen! Belegungsgrad: {loaded_data['belegungsgrad']}%")
         
-        # Spezielle Felder (können in metrics oder direkt sein)
-        if "kundenherkunft" in metrics:
-            loaded_data["kundenherkunft"] = metrics["kundenherkunft"]
-        elif "kundenherkunft" in validated_data:
-            loaded_data["kundenherkunft"] = validated_data["kundenherkunft"]
-        
-        if "zahlungsstatus" in metrics:
-            loaded_data["zahlungsstatus"] = metrics["zahlungsstatus"]
-        elif "zahlungsstatus" in validated_data:
-            loaded_data["zahlungsstatus"] = validated_data["zahlungsstatus"]
-        
-        # Empfehlungen und Message
-        loaded_data["recommendations"] = validated_data.get("recommendations", [])
-        loaded_data["customer_message"] = validated_data.get("customer_message", 
-                                                           f"Letzte Analyse für {tenant_id} geladen")
-        
-        # Analysis Date
-        loaded_data["analysis_date"] = validated_data.get("analysis_date", datetime.now().isoformat())
-        loaded_data["tenant_id"] = tenant_id
-        
-        # Debug-Info
-        if st.session_state.debug_mode:
-            with st.expander("Debug: Geladene Daten", expanded=False):
-                st.write("Validierte Daten:")
-                st.json(validated_data)
-                st.write("Extrahierte Metriken:")
-                st.json(metrics)
-                st.write("Final geladene Daten:")
-                st.json({k: v for k, v in loaded_data.items() if k in DEFAULT_DATA})
+        else:
+            st.info("⚠️ Keine analysierbaren Daten gefunden. Verwende Standarddaten.")
+            # Fallback zu DEFAULT_DATA, die schon geladen ist
         
         # In Session State speichern
         st.session_state.current_data = loaded_data
         st.session_state.before_analysis = loaded_data.copy()
         st.session_state.last_analysis_loaded = True
         
-        st.success(f"✅ Letzte Analyse vom {loaded_data['analysis_date'][:10]} geladen!")
         return True
 
 def safe_convert(value):
@@ -633,7 +695,7 @@ def safe_convert(value):
     return value
 
 def perform_analysis(uploaded_files):
-    """Führt KI-Analyse mit robustem Error-Handling durch"""
+    """EINFACHE Version - führt KI-Analyse durch"""
     if not st.session_state.logged_in: 
         st.error("Kein Tenant eingeloggt")
         return
@@ -641,12 +703,12 @@ def perform_analysis(uploaded_files):
     tenant_id = st.session_state.current_tenant['tenant_id']
     tenant_name = st.session_state.current_tenant['name']
     
-    # Vorherige Daten speichern für Vergleich
+    # Vorherige Daten speichern
     st.session_state.before_analysis = st.session_state.current_data.copy()
     
     # Excel-Daten extrahieren (Fallback)
     excel_data = {}
-    for excel_file in [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls", ".csv"))]:
+    for excel_file in uploaded_files:
         try:
             if excel_file.name.endswith('.csv'):
                 df = pd.read_csv(excel_file)
@@ -664,77 +726,119 @@ def perform_analysis(uploaded_files):
         st.error("Bitte n8n Basis-URL in der Sidebar eingeben")
         return
     
-    # Hauptdatei für n8n vorbereiten
+    # Hauptdatei für n8n
     main_file = uploaded_files[0]
     file_info = (main_file.name, main_file.getvalue(), main_file.type)
     
-    # ====== NEUE LOGIK: Standardisierter n8n Call ======
-    with st.spinner("KI analysiert Daten... (dies kann 30-60 Sekunden dauern)"):
+    # n8n aufrufen
+    with st.spinner("KI analysiert Daten..."):
         result = post_to_n8n_analyze(n8n_base_url, tenant_id, str(uuid.uuid4()), file_info)
     
-    # Debug-Info
+    # Debug
     if st.session_state.debug_mode:
-        with st.expander("Debug: n8n Kommunikation", expanded=False):
+        with st.expander("Debug: n8n Kommunikation", expanded=True):
             st.write(f"Status: {result['status']}")
             st.write(f"Code: {result['code']}")
             st.write(f"Meldung: {result['message']}")
             if result['data']:
-                st.write("Validierte Daten:")
+                st.write("Rohdaten von n8n:")
                 st.json(result['data'])
     
-    # ====== ZENTRALE ERGEBNISVERARBEITUNG ======
+    # ====== EINFACHE VERARBEITUNG ======
     if result['status'] == 'success' and result['data']:
-        n8n_data = result['data']
+        n8n_response = result['data']
         
-        # 1. Metrics mit Excel-Daten mergen (n8n hat Priorität)
-        final_metrics = {}
-        
-        if "metrics" in n8n_data:
-            # Beginne mit n8n Metrics
-            final_metrics = n8n_data["metrics"].copy()
-            # Füge Excel-Daten hinzu, falls n8n sie nicht geliefert hat
-            for key, value in excel_data.items():
-                if key not in final_metrics or final_metrics[key] == 0:
-                    final_metrics[key] = value
-        
-        # 2. Fehlende Werte mit Defaults füllen
+        # Starte mit Standarddaten
         final_data = DEFAULT_DATA.copy()
-        for key in final_data:
-            if key in final_metrics:
-                final_data[key] = final_metrics[key]
         
-        # 3. Empfehlungen und Message
-        final_data["recommendations"] = n8n_data.get("recommendations", [])
-        if not final_data["recommendations"]:
-            # Fallback-Empfehlungen basierend auf Excel-Daten
-            final_data["recommendations"] = generate_fallback_recommendations(tenant_name, final_data)
+        # Extrahiere Daten aus n8n Response
+        extracted_metrics = {}
         
-        final_data["customer_message"] = n8n_data.get("customer_message", 
-                                                     f"Analyse für {tenant_name} abgeschlossen.")
+        # Versuche verschiedene Formate
+        if isinstance(n8n_response, dict):
+            # Format 1: Direkte metrics
+            if "metrics" in n8n_response:
+                extracted_metrics = n8n_response["metrics"]
+            # Format 2: current_analysis
+            elif "current_analysis" in n8n_response:
+                if isinstance(n8n_response["current_analysis"], dict):
+                    if "metrics" in n8n_response["current_analysis"]:
+                        extracted_metrics = n8n_response["current_analysis"]["metrics"]
+                    else:
+                        extracted_metrics = n8n_response["current_analysis"]
+            # Format 3: Direkte Business-Daten
+            elif any(key in n8n_response for key in ["belegt", "frei", "belegungsgrad"]):
+                extracted_metrics = n8n_response
         
-        # 4. Metadaten
-        final_data["analysis_date"] = n8n_data.get("analysis_date", datetime.now().isoformat())
+        # Konvertiere sicher
+        def safe_convert(val):
+            if isinstance(val, (int, float)):
+                return val
+            if isinstance(val, str):
+                try:
+                    return float(val)
+                except:
+                    try:
+                        return int(val)
+                    except:
+                        return val
+            return val
+        
+        # Übernehme verfügbare Daten
+        for key in DEFAULT_DATA.keys():
+            if key in extracted_metrics:
+                final_data[key] = safe_convert(extracted_metrics[key])
+        
+        # Spezielle Felder
+        if "kundenherkunft" in extracted_metrics and isinstance(extracted_metrics["kundenherkunft"], dict):
+            final_data["kundenherkunft"] = extracted_metrics["kundenherkunft"]
+        
+        if "zahlungsstatus" in extracted_metrics and isinstance(extracted_metrics["zahlungsstatus"], dict):
+            final_data["zahlungsstatus"] = extracted_metrics["zahlungsstatus"]
+        
+        # Excel-Daten als Fallback
+        for key, value in excel_data.items():
+            if key not in final_data or final_data[key] == 0:
+                final_data[key] = value
+        
+        # Berechne belegungsgrad falls nötig
+        if "belegt" in final_data and "frei" in final_data:
+            belegt = final_data["belegt"]
+            frei = final_data["frei"]
+            if belegt + frei > 0:
+                final_data["belegungsgrad"] = round((belegt / (belegt + frei)) * 100, 1)
+        
+        # Empfehlungen
+        if isinstance(n8n_response, dict):
+            final_data["recommendations"] = n8n_response.get("recommendations", [])
+            if not final_data["recommendations"]:
+                final_data["recommendations"] = generate_fallback_recommendations(tenant_name, final_data)
+            
+            final_data["customer_message"] = n8n_response.get("customer_message", 
+                                                             n8n_response.get("summary", 
+                                                                              f"Analyse für {tenant_name} abgeschlossen"))
+        
+        # Metadaten
+        final_data["analysis_date"] = datetime.now().isoformat()
         final_data["tenant_id"] = tenant_id
         final_data["files"] = [f.name for f in uploaded_files]
-        final_data["source"] = "n8n_ai"
         
-        # 5. In Session State speichern
+        # In Session State
         st.session_state.after_analysis = final_data.copy()
         st.session_state.current_data = final_data.copy()
         
-        # 6. History aktualisieren
+        # History
         history_entry = {
             "ts": datetime.now().isoformat(),
             "data": final_data.copy(),
             "files": [f.name for f in uploaded_files],
             "tenant_id": tenant_id,
             "tenant_name": tenant_name,
-            "type": "ai_analysis",
-            "source": "n8n"
+            "type": "ai_analysis"
         }
         st.session_state.analyses_history.append(history_entry)
         
-        # 7. Zähler erhöhen
+        # Zähler erhöhen
         if 'analyses_used' in st.session_state.current_tenant:
             st.session_state.current_tenant['analyses_used'] += 1
         
@@ -751,17 +855,16 @@ def perform_analysis(uploaded_files):
             
             # Excel-Daten mit Defaults mergen
             final_data = DEFAULT_DATA.copy()
-            for key in final_data:
-                if key in excel_data:
-                    final_data[key] = excel_data[key]
+            for key, value in excel_data.items():
+                if key in final_data:
+                    final_data[key] = value
             
-            # Empfehlungen generieren
+            # Empfehlungen
             final_data["recommendations"] = generate_fallback_recommendations(tenant_name, final_data)
             final_data["customer_message"] = f"Analyse basierend auf Excel-Daten für {tenant_name}"
             final_data["analysis_date"] = datetime.now().isoformat()
             final_data["tenant_id"] = tenant_id
             final_data["files"] = [f.name for f in uploaded_files]
-            final_data["source"] = "excel_fallback"
             
             # In Session State
             st.session_state.after_analysis = final_data.copy()
@@ -774,8 +877,7 @@ def perform_analysis(uploaded_files):
                 "files": [f.name for f in uploaded_files],
                 "tenant_id": tenant_id,
                 "tenant_name": tenant_name,
-                "type": "excel_analysis",
-                "source": "fallback"
+                "type": "excel_analysis"
             }
             st.session_state.analyses_history.append(history_entry)
             
@@ -785,7 +887,7 @@ def perform_analysis(uploaded_files):
             st.error("Keine analysierbaren Daten gefunden.")
             return
     
-    # Neuladen der Seite
+    # Neuladen
     time.sleep(1)
     st.rerun()
 
