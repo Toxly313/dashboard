@@ -399,7 +399,80 @@ def standardize_get_last_response(raw_response, tenant_id):
             "source": "empty"
         }
     }
+
+def parse_supabase_response(response_data):
+    """
+    Parst JEDE n8n-Antwort, die jetzt Supabase-kompatibel sein sollte
+    """
+    print(f"\n🔍 PARSE SUPABASE RESPONSE - Type: {type(response_data)}")
+    
+    # Fall 1: Direktes Supabase-Array
+    if isinstance(response_data, list):
+        print(f"✅ Supabase Array erkannt, Länge: {len(response_data)}")
         
+        if len(response_data) == 0:
+            return {
+                "status": "success",
+                "count": 0,
+                "data": DEFAULT_DATA.copy()
+            }
+        
+        row = response_data[0]
+        
+        # WICHTIG: analysis_result ist ein JSON-String
+        analysis_result_str = row.get('analysis_result')
+        
+        if not analysis_result_str:
+            print("❌ Kein analysis_result Feld in Supabase-Row")
+            return {
+                "status": "success",
+                "count": 0,
+                "data": DEFAULT_DATA.copy()
+            }
+        
+        try:
+            # Parse den JSON-String
+            analysis_data = json.loads(analysis_result_str)
+            print(f"✅ analysis_result geparst, Keys: {list(analysis_data.keys())}")
+            
+            # Erstelle das neue Format
+            return {
+                "status": "success",
+                "tenant_id": row.get('tenant_id'),
+                "count": 1,
+                "data": {
+                    "metrics": analysis_data.get('metrics', {}),
+                    "recommendations": analysis_data.get('recommendations', []),
+                    "customer_message": analysis_data.get('customer_message', ''),
+                    "analysis_date": analysis_data.get('analysis_date', row.get('created_at'))
+                }
+            }
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON Parse Error: {e}")
+            print(f"Raw string: {analysis_result_str[:100]}...")
+            return {
+                "status": "error",
+                "error": f"JSON Parse Error: {str(e)}",
+                "data": DEFAULT_DATA.copy()
+            }
+    
+    # Fall 2: Standardisiertes Format
+    if isinstance(response_data, dict) and 'data' in response_data:
+        print("✅ Standardisiertes Format erkannt")
+        return response_data
+    
+    # Fall 3: Altes Format (für Kompatibilität)
+    if isinstance(response_data, dict):
+        print("⚠️ Altes Format erkannt, konvertiere...")
+        # ... bestehende Konvertierung ...
+    
+    print(f"❌ Unbekanntes Format: {type(response_data)}")
+    return {
+        "status": "error",
+        "message": f"Unbekanntes Format: {type(response_data)}",
+        "data": DEFAULT_DATA.copy()
+    }
+
 def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
     """Vereinfachte Version - erwartet standardisiertes Format von n8n"""
     print(f"\nNEW-ANALYSIS für {tenant_id}")
