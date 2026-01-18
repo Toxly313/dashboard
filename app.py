@@ -654,9 +654,8 @@ def create_timeseries_chart(history_data, metric_key, title):
     fig = go.Figure(data=[go.Scatter(x=dates, y=values, mode='lines+markers', name=title)])
     fig.update_layout(title=f"Entwicklung: {title}", height=300, xaxis_title="Datum", yaxis_title=title)
     return fig
-
 def load_last_analysis():
-    """Lädt die letzte Analyse - robust und einfach"""
+    """Lädt die letzte Analyse - mit verbessertem Error-Handling"""
     if not st.session_state.logged_in:
         return False
 
@@ -664,40 +663,53 @@ def load_last_analysis():
     n8n_base_url = st.session_state.n8n_base_url
 
     if not n8n_base_url:
-        st.warning("n8n Basis-URL nicht gesetzt. Verwende Standarddaten.")
+        st.warning("n8n Basis-URL nicht gesetzt.")
         st.session_state.current_data = DEFAULT_DATA.copy()
-        st.session_state.before_analysis = DEFAULT_DATA.copy()
         return True
 
     with st.spinner("Lade letzte Analyse..."):
-        # Rufe n8n Endpoint auf
-        status, message, response = post_to_n8n_get_last(
-            n8n_base_url, tenant_id, str(uuid.uuid4())
-        )
-        
-        # Debug-Info
-        if st.session_state.debug_mode:
-            with st.expander("Debug: GET-LAST Response", expanded=False):
-                st.write(f"Status Code: {status}")
-                st.write(f"Message: {message}")
-                st.write("Raw Response:")
-                st.json(response if response else {})
-        
-        # Fallback bei Fehlern
-        if status != 200 or not response:
-            st.info("⚠️ Keine vorherige Analyse gefunden oder Server-Fehler. Verwende Standarddaten.")
+        try:
+            response = requests.post(
+                f"{n8n_base_url.rstrip('/')}/get-last-analysis-only",
+                json={
+                    "tenant_id": tenant_id,
+                    "uuid": str(uuid.uuid4())
+                },
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                st.info("Keine vorherige Analyse gefunden.")
+                st.session_state.current_data = DEFAULT_DATA.copy()
+                return True
+            
+            # Direktes Parsing (keine Standardisierung nötig)
+            supabase_data = response.json()
+            
+            # Debug
+            if st.session_state.debug_mode:
+                with st.expander("Debug: Raw Supabase Response"):
+                    st.json(supabase_data)
+            
+            # Parse mit angepasster Funktion
+            contract = parse_supabase_response(supabase_data)
+            
+            if contract.get('status') == 'success' and contract.get('count', 0) > 0:
+                # Extrahiere Business-Daten
+                business_data = extract_business_data(contract)
+                st.session_state.current_data = business_data
+                st.session_state.before_analysis = business_data.copy()
+                st.success(f"Letzte Analyse geladen vom {business_data.get('analysis_date', '')[:10]}")
+                return True
+            else:
+                st.info("Keine Analyse in der Datenbank.")
+                st.session_state.current_data = DEFAULT_DATA.copy()
+                return True
+                
+        except Exception as e:
+            st.error(f"Fehler beim Laden: {str(e)}")
             st.session_state.current_data = DEFAULT_DATA.copy()
-            st.session_state.before_analysis = DEFAULT_DATA.copy()
-            return True
-        
-        # Validiere Response
-        validated_data, error_msg = N8NResponseValidator.validate_response(response)
-        
-        if not validated_data:
-            st.warning(f"⚠️ Ungültiges Format: {error_msg}. Verwende Standarddaten.")
-            st.session_state.current_data = DEFAULT_DATA.copy()
-            st.session_state.before_analysis = DEFAULT_DATA.copy()
-            return True
+            return False
         
         # ====== MERGE LOGIK ======
         # Starte mit DEFAULT_DATA
