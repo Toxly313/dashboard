@@ -124,77 +124,42 @@ DEFAULT_DATA = {
 # ====== KORRIGIERTE API-FUNKTIONEN ======
 def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
     """
-    Erwartet jetzt Contract-Format von n8n
+    Erwartet jetzt SUPABASE-FORMAT von n8n
     """
-    print(f"\nGET-LAST Request für Tenant: {tenant_id}")
+    print(f"\n📞 GET-LAST (Supabase Format) für {tenant_id}")
     
     url = f"{base_url.rstrip('/')}/get-last-analysis-only"
-    print(f"GET-LAST URL: {url}")
     
     payload = {
         "tenant_id": tenant_id,
-        "uuid": uuid_str,
-        "action": "get_last_analysis"
+        "uuid": uuid_str
     }
     
-    headers = {'Content-Type': 'application/json'}
-    
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        print(f"GET-LAST Response Status: {response.status_code}")
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
         
-        if response.status_code != 200:
-            return None, f"HTTP {response.status_code}", None
+        json_response = response.json()
         
-        try:
-            json_response = response.json()
-            print(f"GET-LAST JSON Typ: {type(json_response)}")
-            
-            # NEU: Contract-Format erkennen
-            if isinstance(json_response, dict) and 'data' in json_response:
-                # Contract-Format erkannt
-                contract = json_response
-                print(f"✅ Contract Format erkannt, Status: {contract.get('status')}")
-                
-                if contract.get('status') == 'success' and contract.get('count', 0) > 0:
-                    # Extrahiere die Business-Daten aus data.metrics
-                    data = contract['data']
-                    
-                    # Kombiniere metrics mit den anderen Feldern
-                    business_data = data['metrics'].copy() if 'metrics' in data else {}
-                    business_data['recommendations'] = data.get('recommendations', [])
-                    business_data['customer_message'] = data.get('customer_message', '')
-                    business_data['analysis_date'] = data.get('analysis_date', '')
-                    business_data['tenant_id'] = contract.get('tenant_id', tenant_id)
-                    
-                    return business_data, "Success", None
-                else:
-                    return None, f"Keine Daten im Contract (Status: {contract.get('status')})", json_response
-            else:
-                # Altes Format (Fallback)
-                print("⚠️ Altes Format, versuche direkte Business-Daten")
-                if isinstance(json_response, dict) and any(key in json_response for key in ["belegt", "frei", "belegungsgrad"]):
-                    return json_response, "Success (altes Format)", None
-                else:
-                    return None, "Ungültiges Format", json_response
-                
-        except json.JSONDecodeError:
-            return None, "Kein JSON in Response", response.text[:200]
-            
-    except requests.exceptions.Timeout:
-        return None, "Timeout nach 30s", None
+        # Parse mit unserer neuen Funktion
+        contract = parse_supabase_response(json_response)
+        
+        # Extrahiere Business-Daten für Kompatibilität
+        business_data = extract_business_data(contract)
+        
+        return business_data, "Success", None
+        
     except Exception as e:
+        print(f"❌ Fehler: {str(e)}")
         return None, f"Exception: {str(e)}", None
-
 
 def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
     """
-    Erwartet jetzt Contract-Format von n8n
+    Erwartet SUPABASE-FORMAT von n8n
     """
-    print(f"\nNEW-ANALYSIS für {tenant_id}")
+    print(f"\n📞 NEW-ANALYSIS (Supabase Format) für {tenant_id}")
     
     url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
-    print(f"NEW-ANALYSIS URL: {url}")
     
     # Datei vorbereiten
     filename, file_content, file_type = file_info
@@ -203,7 +168,6 @@ def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
     payload = {
         "tenant_id": tenant_id,
         "uuid": uuid_str,
-        "action": "analyze_with_deepseek",
         "file": {
             "filename": filename,
             "content_type": file_type,
@@ -211,51 +175,22 @@ def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
         }
     }
     
-    headers = {'Content-Type': 'application/json'}
-    
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=120)
-        print(f"Response Status: {response.status_code}")
+        response = requests.post(url, json=payload, timeout=120)
+        response.raise_for_status()
         
-        if response.status_code != 200:
-            return None, f"HTTP {response.status_code}", response.text[:200]
+        json_response = response.json()
         
-        try:
-            json_response = response.json()
-            print(f"Response Typ: {type(json_response)}")
-            
-            # NEU: Contract-Format erkennen
-            if isinstance(json_response, dict) and 'data' in json_response:
-                # Contract-Format erkannt
-                contract = json_response
-                print(f"✅ Contract Format erkannt, Status: {contract.get('status')}")
-                
-                if contract.get('status') == 'success' and contract.get('count', 0) > 0:
-                    # Extrahiere die Business-Daten aus data.metrics
-                    data = contract['data']
-                    
-                    # Kombiniere metrics mit den anderen Feldern
-                    business_data = data['metrics'].copy() if 'metrics' in data else {}
-                    business_data['recommendations'] = data.get('recommendations', [])
-                    business_data['customer_message'] = data.get('customer_message', '')
-                    business_data['analysis_date'] = data.get('analysis_date', '')
-                    business_data['tenant_id'] = contract.get('tenant_id', tenant_id)
-                    
-                    return business_data, "Success", None
-                else:
-                    return None, f"Fehler im Contract (Status: {contract.get('status')})", json_response
-            else:
-                # Altes Format (Fallback)
-                print("⚠️ Altes Format, versuche direkte Business-Daten")
-                if isinstance(json_response, dict) and any(key in json_response for key in ["belegt", "frei", "belegungsgrad"]):
-                    return json_response, "Success (altes Format)", None
-                else:
-                    return None, "Ungültiges Format", json_response
-            
-        except json.JSONDecodeError:
-            return None, "Kein JSON in Response", response.text[:200]
-            
+        # Parse mit unserer neuen Funktion
+        contract = parse_supabase_response(json_response)
+        
+        # Extrahiere Business-Daten für Kompatibilität
+        business_data = extract_business_data(contract)
+        
+        return business_data, "Success", None
+        
     except Exception as e:
+        print(f"❌ Fehler: {str(e)}")
         return None, f"Exception: {str(e)}", None
 
 def merge_contract_data(contract_data):
@@ -399,7 +334,114 @@ def standardize_get_last_response(raw_response, tenant_id):
             "source": "empty"
         }
     }
+
+def parse_supabase_response(response_data):
+    """
+    Parst JEDE n8n-Antwort, die jetzt Supabase-kompatibel sein sollte
+    """
+    print(f"\n🔍 PARSE SUPABASE RESPONSE - Type: {type(response_data)}")
+    
+    # Default Rückgabe
+    default_result = {
+        "status": "error",
+        "tenant_id": "unbekannt_tenant",
+        "count": 0,
+        "data": DEFAULT_DATA.copy()
+    }
+    
+    # Fall 1: Response ist None
+    if response_data is None:
+        print("❌ Response ist None")
+        return default_result
+    
+    # Fall 2: Es ist bereits unser neues Format
+    if isinstance(response_data, dict) and 'data' in response_data:
+        print("✅ Neues Contract-Format erkannt")
+        return response_data
+    
+    # Fall 3: Es ist ein Array (direkt von Supabase)
+    if isinstance(response_data, list) and len(response_data) > 0:
+        print(f"✅ Supabase Array erkannt, Länge: {len(response_data)}")
         
+        row = response_data[0]
+        
+        # Extrahiere analysis_result (ist ein JSON-String!)
+        analysis_result_str = row.get('analysis_result')
+        
+        if not analysis_result_str:
+            print("❌ Kein analysis_result Feld")
+            return default_result
+        
+        # Parse den JSON-String
+        try:
+            analysis_data = json.loads(analysis_result_str)
+            print(f"✅ analysis_result geparst, Type: {type(analysis_data)}")
+        except json.JSONDecodeError as e:
+            print(f"❌ Konnte analysis_result nicht parsen: {e}")
+            return default_result
+        
+        # Baue das neue Format
+        return {
+            "status": "success",
+            "tenant_id": row.get('tenant_id', 'unbekannt_tenant'),
+            "document_id": row.get('document_id'),
+            "count": 1,
+            "data": {
+                "metrics": analysis_data.get('metrics', {}),
+                "recommendations": analysis_data.get('recommendations', []),
+                "customer_message": analysis_data.get('customer_message', ''),
+                "analysis_date": analysis_data.get('analysis_date', row.get('created_at'))
+            }
+        }
+    
+    # Fall 4: Altes Format (für Übergangsphase)
+    print("⚠️ Altes Format, versuche zu konvertieren")
+    if isinstance(response_data, dict):
+        # Versuche als Business-Daten zu behandeln
+        if 'belegt' in response_data or 'frei' in response_data:
+            return {
+                "status": "success",
+                "tenant_id": response_data.get('tenant_id', 'unbekannt_tenant'),
+                "count": 1,
+                "data": {
+                    "metrics": {k: v for k, v in response_data.items() 
+                               if k in DEFAULT_DATA or k in ['kundenherkunft', 'zahlungsstatus', 
+                                                           'neukunden_labels', 'neukunden_monat']},
+                    "recommendations": response_data.get('recommendations', []),
+                    "customer_message": response_data.get('customer_message', ''),
+                    "analysis_date": response_data.get('analysis_date', datetime.now().isoformat())
+                }
+            }
+    
+    print(f"❌ Unbekanntes Format: {type(response_data)}")
+    return default_result
+
+
+def extract_business_data(contract_response):
+    """
+    Extrahiert Business-Daten aus dem Contract-Format
+    Für Kompatibilität mit deinem existierenden Code
+    """
+    if not contract_response or contract_response.get('status') != 'success':
+        return DEFAULT_DATA.copy()
+    
+    data = contract_response.get('data', {})
+    metrics = data.get('metrics', {})
+    
+    # Kombiniere mit Defaults
+    result = DEFAULT_DATA.copy()
+    
+    for key in result.keys():
+        if key in metrics:
+            result[key] = metrics[key]
+    
+    # Füge zusätzliche Felder hinzu
+    for field in ['recommendations', 'customer_message', 'analysis_date', 'tenant_id']:
+        if field in data:
+            result[field] = data[field]
+    
+    return result
+
 def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
     """Vereinfachte Version - erwartet standardisiertes Format von n8n"""
     print(f"\nNEW-ANALYSIS für {tenant_id}")
