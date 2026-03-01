@@ -64,7 +64,6 @@ if 'PORT' in os.environ:
 st.set_page_config(page_title="Self-Storage Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
 # ====== PASSWORT-HASHES (sha256) ======
-# Standard Demo-Passwort: "demo123" → hash davon
 TENANTS = {
     "demo@kunde.de": {
         "tenant_id": "kunde_demo_123",
@@ -112,7 +111,6 @@ def load_history_from_disk(tenant_id: str) -> list:
         print(f"History laden fehlgeschlagen: {e}")
     return []
 
-# ====== FIX #1: extract_business_data war nicht definiert ======
 def extract_business_data(contract: dict) -> dict:
     """Extrahiert Business-Daten aus einem standardisierten Contract-Dict"""
     data = contract.get("data", {})
@@ -125,7 +123,6 @@ def extract_business_data(contract: dict) -> dict:
         except json.JSONDecodeError:
             metrics = {}
 
-    # Numerische Felder sicher konvertieren
     def safe_num(v):
         if isinstance(v, (int, float)):
             return v
@@ -138,7 +135,6 @@ def extract_business_data(contract: dict) -> dict:
         if key in metrics:
             result[key] = safe_num(metrics[key])
 
-    # Spezialfelder
     for special in ["kundenherkunft", "zahlungsstatus"]:
         if special in metrics:
             result[special] = metrics[special]
@@ -187,17 +183,22 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
 
 
 def parse_supabase_response(response_data):
-    """Parst n8n-Antwort – unterstützt Listen mit mehreren Items und findet erstes valides."""
-    # --- Liste: alle Items durchsuchen, erstes valides nehmen ---
+    """Parst n8n-Antwort – sortiert nach created_at, nimmt die NEUESTE Analyse."""
+    # --- Liste: nach Datum sortieren, neueste zuerst ---
     if isinstance(response_data, list):
         if len(response_data) == 0:
             return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
 
-        # Suche erstes Item mit analysis_result oder data.recommendations
+        # ====== FIX: Sortiere nach created_at absteigend → neueste Zeile zuerst ======
+        valid_rows = sorted(
+            [r for r in response_data if isinstance(r, dict)],
+            key=lambda r: r.get('created_at', r.get('updated_at', '')),
+            reverse=True  # neueste zuerst
+        )
+
+        # Suche erste (= neueste) Zeile mit analysis_result oder data.recommendations
         best_row = None
-        for row in response_data:
-            if not isinstance(row, dict):
-                continue
+        for row in valid_rows:
             # Fall A: Item hat analysis_result (direkt aus Supabase)
             ar = row.get('analysis_result')
             if ar and ar != 'undefined' and ar is not None:
@@ -245,9 +246,7 @@ def parse_supabase_response(response_data):
 
     # --- Dict direkt von n8n (bereits strukturiert) ---
     if isinstance(response_data, dict):
-        # Hat data-Feld → direkt zurückgeben
         if 'data' in response_data:
-            # Sicherstellen dass count > 0 wenn data vorhanden
             data = response_data.get('data', {})
             has_content = (
                 data.get('recommendations') or
@@ -258,7 +257,6 @@ def parse_supabase_response(response_data):
                 response_data = dict(response_data)
                 response_data['count'] = 1
             return response_data
-        # Hat analysis_result direkt
         ar = response_data.get('analysis_result')
         if ar and ar not in ('undefined', None):
             try:
@@ -280,7 +278,6 @@ def parse_supabase_response(response_data):
     return {"status": "error", "message": f"Unbekanntes Format: {type(response_data)}", "data": DEFAULT_DATA.copy()}
 
 
-# ====== FIX #2: post_to_n8n_analyze nur EINMAL definiert (doppelte Definition entfernt) ======
 def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
     """Sendet Datei an n8n und gibt standardisiertes Ergebnis zurück"""
     url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
@@ -409,7 +406,6 @@ def generate_fallback_recommendations(tenant_name, data):
     return recs
 
 
-# ====== FIX #3: load_last_analysis – dead code entfernt, extract_business_data genutzt ======
 def load_last_analysis():
     if not st.session_state.logged_in:
         return False
@@ -696,7 +692,6 @@ def render_overview():
                 fig.update_layout(title='Zahlungsstatus Vergleich', height=300, barmode='group')
                 st.plotly_chart(fig, use_container_width=True)
 
-        # ====== INSIGHTS ENGINE EINGEBUNDEN ======
         recommendations = after.get('recommendations', [])
         local_tips = build_insights(after)
 
@@ -726,7 +721,6 @@ def render_overview():
         with col3: st.metric("Belegte Einheiten", data.get('belegt', 0))
         with col4: st.metric("Social Engagement", data.get('social_facebook', 0) + data.get('social_google', 0))
 
-        # Lokale Empfehlungen auch im Normalzustand anzeigen
         local_tips = build_insights(data)
         if local_tips and not data.get("recommendations"):
             st.subheader("📊 Handlungsempfehlungen")
@@ -752,7 +746,6 @@ def render_overview():
             else:
                 labels = data.get('neukunden_labels', ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun'])
                 values = data.get('neukunden_monat', [5, 4, 7, 6, 8, 9])
-                # FIX #4: Länge angleichen
                 min_len = min(len(labels), len(values))
                 fig = go.Figure(data=[go.Bar(x=labels[:min_len], y=values[:min_len])])
                 fig.update_layout(title="Neukunden pro Monat", height=300)
@@ -998,12 +991,10 @@ def main():
             password = st.text_input("Passwort", type="password", key="login_password")
 
             if st.button("Anmelden", type="primary", use_container_width=True):
-                # ====== FIX #5: Echte Passwortprüfung ======
                 entered_hash = hashlib.sha256(password.encode()).hexdigest()
                 if email in TENANTS and TENANTS[email]["password_hash"] == entered_hash:
                     st.session_state.logged_in = True
                     st.session_state.current_tenant = {k: v for k, v in TENANTS[email].items() if k != "password_hash"}
-                    # History aus Datei laden
                     st.session_state.analyses_history = load_history_from_disk(TENANTS[email]["tenant_id"])
                     load_success = load_last_analysis()
                     if load_success:
