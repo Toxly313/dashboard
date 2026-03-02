@@ -123,6 +123,16 @@ def extract_business_data(contract: dict) -> dict:
         except json.JSONDecodeError:
             metrics = {}
 
+    # Fallback: if metrics is empty, check if business keys exist at data level
+    if not metrics or (isinstance(metrics, dict) and len(metrics) == 0):
+        for key in ["belegt", "frei", "belegungsgrad", "vertragsdauer_durchschnitt",
+                     "reminder_automat", "social_facebook", "social_google"]:
+            if key in data and data[key] is not None:
+                metrics[key] = data[key]
+        for special in ["kundenherkunft", "zahlungsstatus"]:
+            if special in data and isinstance(data[special], dict):
+                metrics[special] = data[special]
+
     def safe_num(v):
         if isinstance(v, (int, float)):
             return v
@@ -154,13 +164,25 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
         if response.status_code != 200:
             return None, f"HTTP {response.status_code}", None
         json_response = response.json()
+        # Handle array response (n8n may send 2 items)
+        if isinstance(json_response, list):
+            # Filter out supabase-internal items, prefer items with data.metrics
+            filtered = [item for item in json_response if isinstance(item, dict) and not item.get('_for_supabase')]
+            if filtered:
+                json_response = filtered[0]
+            elif json_response:
+                json_response = json_response[0]
+            else:
+                return None, "Leere Array-Response", None
         if isinstance(json_response, dict) and 'data' in json_response:
             contract = json_response
             data = contract.get('data', {})
+            metrics = data.get('metrics', {})
+            has_real_metrics = isinstance(metrics, dict) and len(metrics) > 0
             has_data = (
                 contract.get('count', 0) > 0 or
                 bool(data.get('recommendations')) or
-                bool(data.get('metrics')) or
+                has_real_metrics or
                 bool(data.get('customer_message'))
             )
             if contract.get('status') == 'success' and has_data:
@@ -196,19 +218,41 @@ def parse_supabase_response(response_data):
             reverse=True  # neueste zuerst
         )
 
+        # Filter out supabase-internal items
+        valid_rows = [r for r in valid_rows if not r.get('_for_supabase')]
+
         # Suche erste (= neueste) Zeile mit analysis_result oder data.recommendations
         best_row = None
+
+        # Pass 1: Prefer rows with non-empty metrics
         for row in valid_rows:
-            # Fall A: Item hat analysis_result (direkt aus Supabase)
             ar = row.get('analysis_result')
             if ar and ar != 'undefined' and ar is not None:
-                best_row = row
-                break
-            # Fall B: Item hat data.recommendations (bereits transformiert)
+                try:
+                    parsed = json.loads(ar) if isinstance(ar, str) else ar
+                    if isinstance(parsed, dict) and isinstance(parsed.get('metrics'), dict) and len(parsed.get('metrics', {})) > 0:
+                        best_row = row
+                        break
+                except (json.JSONDecodeError, AttributeError):
+                    pass
             data_field = row.get('data', {})
-            if isinstance(data_field, dict) and data_field.get('recommendations'):
-                best_row = row
-                break
+            if isinstance(data_field, dict):
+                m = data_field.get('metrics', {})
+                if isinstance(m, dict) and len(m) > 0:
+                    best_row = row
+                    break
+
+        # Pass 2: Fallback - any row with recommendations or analysis_result
+        if best_row is None:
+            for row in valid_rows:
+                ar = row.get('analysis_result')
+                if ar and ar != 'undefined' and ar is not None:
+                    best_row = row
+                    break
+                data_field = row.get('data', {})
+                if isinstance(data_field, dict) and data_field.get('recommendations'):
+                    best_row = row
+                    break
 
         if best_row is None:
             return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
@@ -439,10 +483,12 @@ def load_last_analysis():
             contract = parse_supabase_response(supabase_data)
 
             data_field = contract.get('data', {})
+            metrics = data_field.get('metrics', {})
+            has_real_metrics = isinstance(metrics, dict) and len(metrics) > 0
             has_data = (
                 contract.get('count', 0) > 0 or
                 bool(data_field.get('recommendations')) or
-                bool(data_field.get('metrics')) or
+                has_real_metrics or
                 bool(data_field.get('customer_message'))
             )
             if contract.get('status') == 'success' and has_data:
