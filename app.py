@@ -192,30 +192,43 @@ def parse_supabase_response(response_data):
         # ====== FIX: Sortiere nach created_at absteigend → neueste Zeile zuerst ======
         valid_rows = sorted(
             [r for r in response_data if isinstance(r, dict)],
-            key=lambda r: r.get('created_at', r.get('updated_at', '')),
+            key=lambda r: r.get('created_at', r.get('updated_at', r.get('converted_at', ''))),
             reverse=True  # neueste zuerst
         )
 
         # Suche erste (= neueste) Zeile mit analysis_result oder data.recommendations
+        _invalid = ('undefined', None, 'unknown', '')
         best_row = None
         for row in valid_rows:
-            # Fall A: Item hat analysis_result (direkt aus Supabase)
+            # Fall A: analysis_result direkt auf der Zeile
             ar = row.get('analysis_result')
-            if ar and ar != 'undefined' and ar is not None:
+            if ar and ar not in _invalid:
                 best_row = row
                 break
-            # Fall B: Item hat data.recommendations (bereits transformiert)
+            # Fall A2: analysis_result in data verschachtelt (n8n Contract-Format)
             data_field = row.get('data', {})
-            if isinstance(data_field, dict) and data_field.get('recommendations'):
-                best_row = row
-                break
+            if isinstance(data_field, dict):
+                ar_nested = data_field.get('analysis_result')
+                if ar_nested and ar_nested not in _invalid:
+                    best_row = row
+                    break
+                # Fall B: data hat bereits recommendations (bereits transformiert)
+                if data_field.get('recommendations'):
+                    best_row = row
+                    break
 
         if best_row is None:
             return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
 
-        # Fall A: analysis_result als JSON-String
+        # analysis_result finden: erst top-level, dann in data verschachtelt
         ar = best_row.get('analysis_result')
-        if ar and ar not in ('undefined', None):
+        if not ar or ar in _invalid:
+            nested_data = best_row.get('data', {})
+            if isinstance(nested_data, dict):
+                ar = nested_data.get('analysis_result')
+
+        # Fall A: analysis_result als JSON-String oder Dict parsen
+        if ar and ar not in _invalid:
             try:
                 analysis_data = json.loads(ar) if isinstance(ar, str) else ar
                 return {
@@ -258,7 +271,7 @@ def parse_supabase_response(response_data):
                 response_data['count'] = 1
             return response_data
         ar = response_data.get('analysis_result')
-        if ar and ar not in ('undefined', None):
+        if ar and ar not in ('undefined', None, 'unknown', ''):
             try:
                 analysis_data = json.loads(ar) if isinstance(ar, str) else ar
                 return {
