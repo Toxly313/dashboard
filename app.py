@@ -658,17 +658,17 @@ def render_overview():
         st.subheader("Key Performance Indicators")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            delta = after.get('belegungsgrad', 0) - before.get('belegungsgrad', 0)
-            st.metric("Belegungsgrad", f"{after.get('belegungsgrad', 0)}%", f"{delta:+.1f}%")
+            delta = float(after.get('belegungsgrad', 0) or 0) - float(before.get('belegungsgrad', 0) or 0)
+            st.metric("Belegungsgrad", f"{float(after.get('belegungsgrad', 0) or 0)}%", f"{delta:+.1f}%")
         with col2:
-            delta = after.get('vertragsdauer_durchschnitt', 0) - before.get('vertragsdauer_durchschnitt', 0)
-            st.metric("Ø Vertragsdauer", f"{after.get('vertragsdauer_durchschnitt', 0):.1f} Monate", f"{delta:+.1f}")
+            delta = float(after.get('vertragsdauer_durchschnitt', 0) or 0) - float(before.get('vertragsdauer_durchschnitt', 0) or 0)
+            st.metric("Ø Vertragsdauer", f"{float(after.get('vertragsdauer_durchschnitt', 0) or 0):.1f} Monate", f"{delta:+.1f}")
         with col3:
             delta = after.get('belegt', 0) - before.get('belegt', 0)
-            st.metric("Belegte Einheiten", after.get('belegt', 0), f"{delta:+d}")
+            st.metric("Belegte Einheiten", after.get('belegt', 0), f"{int(delta):+d}")
         with col4:
-            before_social = before.get('social_facebook', 0) + before.get('social_google', 0)
-            after_social = after.get('social_facebook', 0) + after.get('social_google', 0)
+            before_social = int(before.get('social_facebook', 0) or 0) + int(before.get('social_google', 0) or 0)
+            after_social = int(after.get('social_facebook', 0) or 0) + int(after.get('social_google', 0) or 0)
             st.metric("Social Engagement", after_social, f"{after_social - before_social:+.0f}")
 
         st.subheader("Detail-Vergleich")
