@@ -47,10 +47,6 @@ def heatmap(matrix, xlabels, ylabels, title="Cohort Retention", h=300):
     fig = go.Figure(go.Heatmap(z=matrix, x=xlabels, y=ylabels, colorscale="Blues"))
     return style_fig(fig, title, h)
 
-# --- Empfehlungen: horizontale Balken (Impact) & Ersparnis (€) ---
-from ui_theme import style_fig, PURPLE, TEAL
-import plotly.graph_objects as go
-
 def tips_impact_chart(items, h=280):
     """
     items: [{'title': str, 'impact_score': int(0-10)}]

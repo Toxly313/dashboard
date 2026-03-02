@@ -1,3 +1,16 @@
+def _safe_int(v, default=0):
+    try:
+        return int(float(v))
+    except (ValueError, TypeError):
+        return default
+
+def _safe_float(v, default=0.0):
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return default
+
+
 def build_insights(data: dict) -> list[dict]:
     """
     Liefert priorisierte Empfehlungen mit zusätzliche Feldern:
@@ -9,25 +22,25 @@ def build_insights(data: dict) -> list[dict]:
     out = []
     
     # Daten extrahieren und sicher konvertieren
-    belegt = int(data.get("belegt", 0))
-    frei = int(data.get("frei", 0))
-    tot = belegt + frei if (belegt + frei) > 0 else 1
-    occ = (belegt / tot * 100) if tot else float(data.get("belegungsgrad", 0))
+    belegt = _safe_int(data.get("belegt", 0))
+    frei = _safe_int(data.get("frei", 0))
+    tot = belegt + frei
+    occ = (belegt / tot * 100) if tot > 0 else _safe_float(data.get("belegungsgrad", 0))
     
-    vd = float(data.get("vertragsdauer_durchschnitt", 0) or 0)
+    vd = _safe_float(data.get("vertragsdauer_durchschnitt", 0))
     
     pay = data.get("zahlungsstatus", {}) or {}
-    paid = int(pay.get("bezahlt", 0))
-    open_ = int(pay.get("offen", 0))
-    over = int(pay.get("überfällig", 0))
+    paid = _safe_int(pay.get("bezahlt", 0))
+    open_ = _safe_int(pay.get("offen", 0))
+    over = _safe_int(pay.get("überfällig", 0))
     
     her = data.get("kundenherkunft", {}) or {}
-    online = int(her.get("Online", 0))
-    emp = int(her.get("Empfehlung", 0))
-    walk = int(her.get("Vorbeikommen", 0))
+    online = _safe_int(her.get("Online", 0))
+    emp = _safe_int(her.get("Empfehlung", 0))
+    walk = _safe_int(her.get("Vorbeikommen", 0))
     
-    google = int(data.get("social_google", 0))
-    fb = int(data.get("social_facebook", 0))
+    google = _safe_int(data.get("social_google", 0))
+    fb = _safe_int(data.get("social_facebook", 0))
 
     # 1) Auslastung zu niedrig
     if occ < 85:
