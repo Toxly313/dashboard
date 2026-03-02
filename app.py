@@ -460,6 +460,17 @@ def load_last_analysis():
             )
             if contract.get('status') == 'success' and has_data:
                 business_data = extract_business_data(contract)
+                # Wenn Metriken leer (n8n metrics: {}) → aus lokaler History ergänzen
+                if not business_data.get('belegt') or business_data.get('belegt') == DEFAULT_DATA.get('belegt'):
+                    local_history = load_history_from_disk(tenant_id)
+                    if local_history:
+                        for entry in reversed(local_history):
+                            local_data = entry.get('data', {})
+                            if local_data.get('belegt') and local_data.get('belegt') != DEFAULT_DATA.get('belegt'):
+                                for key in ['belegt', 'frei', 'belegungsgrad', 'vertragsdauer_durchschnitt', 'reminder_automat', 'social_facebook', 'social_google', 'kundenherkunft', 'zahlungsstatus', 'neukunden_monat', 'neukunden_labels']:
+                                    if key in local_data:
+                                        business_data[key] = local_data[key]
+                                break
                 st.session_state.current_data = business_data
                 st.session_state.before_analysis = business_data.copy()
                 date_str = business_data.get('analysis_date', '')[:10]
@@ -516,10 +527,11 @@ def perform_analysis(uploaded_files):
         n8n_data = result['data']
         final_metrics = {}
         if "metrics" in n8n_data:
-            final_metrics = n8n_data["metrics"].copy()
-            for key, value in excel_data.items():
-                if key not in final_metrics or final_metrics[key] == 0:
-                    final_metrics[key] = value
+            final_metrics = n8n_data["metrics"].copy() if n8n_data["metrics"] else {}
+        # Excel-Daten immer einmergen (auch wenn n8n metrics leer oder fehlt)
+        for key, value in excel_data.items():
+            if key not in final_metrics or final_metrics[key] == 0:
+                final_metrics[key] = value
 
         final_data = DEFAULT_DATA.copy()
         for key in final_data:
