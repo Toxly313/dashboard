@@ -1,4 +1,4 @@
-import os, uuid, json, time, pathlib, hashlib
+import os, uuid, json, time, pathlib, hashlib, copy
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -114,14 +114,26 @@ def load_history_from_disk(tenant_id: str) -> list:
 def extract_business_data(contract: dict) -> dict:
     """Extrahiert Business-Daten aus einem standardisierten Contract-Dict"""
     data = contract.get("data", {})
-    result = DEFAULT_DATA.copy()
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+    result = copy.deepcopy(DEFAULT_DATA)
 
     metrics = data.get("metrics", {})
     if isinstance(metrics, str):
         try:
             metrics = json.loads(metrics)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             metrics = {}
+
+    # Fallback: Wenn metrics leer ist, versuche Metriken direkt aus data zu lesen
+    if not metrics or not isinstance(metrics, dict):
+        flat_keys = set(result.keys()) - {'recommendations', 'customer_message', 'analysis_date'}
+        flat_metrics = {k: v for k, v in data.items() if k in flat_keys}
+        if flat_metrics:
+            metrics = flat_metrics
 
     def safe_num(v):
         if isinstance(v, (int, float)):
@@ -131,17 +143,20 @@ def extract_business_data(contract: dict) -> dict:
         except Exception:
             return v
 
+    metrics_applied = 0
     for key in result:
         if key in metrics:
             result[key] = safe_num(metrics[key])
+            metrics_applied += 1
 
     for special in ["kundenherkunft", "zahlungsstatus"]:
-        if special in metrics:
+        if special in metrics and isinstance(metrics[special], dict):
             result[special] = metrics[special]
 
-    result["recommendations"] = data.get("recommendations", [])
-    result["customer_message"] = data.get("customer_message", "")
-    result["analysis_date"] = data.get("analysis_date", datetime.now().isoformat())
+    result["recommendations"] = data.get("recommendations", data.get("recommendation_list", []))
+    result["customer_message"] = data.get("customer_message", data.get("summary", ""))
+    result["analysis_date"] = data.get("analysis_date", data.get("timestamp", datetime.now().isoformat()))
+    result["_metrics_applied"] = metrics_applied  # Debug-Info: wie viele Metriken übernommen
     return result
 
 # ====== API-FUNKTIONEN ======
@@ -182,100 +197,137 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
         return None, f"Exception: {str(e)}", None
 
 
+def _unwrap_n8n_rows(response_data):
+    """Entpackt n8n-typische Wrapper: [{"json": {...}}, ...] → [{...}, ...]"""
+    if not isinstance(response_data, list):
+        return response_data
+    unwrapped = []
+    for item in response_data:
+        if isinstance(item, dict) and 'json' in item and isinstance(item['json'], dict):
+            unwrapped.append(item['json'])
+        elif isinstance(item, dict):
+            unwrapped.append(item)
+    return unwrapped if unwrapped else response_data
+
+
+def _extract_analysis_from_row(row):
+    """Versucht analysis_data aus einer Zeile zu extrahieren (mehrere Formate)."""
+    if not isinstance(row, dict):
+        return None
+
+    # Fall A: analysis_result als JSON-String oder Dict
+    ar = row.get('analysis_result')
+    if ar and ar not in ('undefined', 'null', None):
+        try:
+            analysis_data = json.loads(ar) if isinstance(ar, str) else ar
+            if isinstance(analysis_data, dict):
+                return analysis_data
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            pass
+
+    # Fall B: data-Feld mit recommendations/metrics
+    data_field = row.get('data', {})
+    if isinstance(data_field, str):
+        try:
+            data_field = json.loads(data_field)
+        except (json.JSONDecodeError, TypeError):
+            data_field = {}
+    if isinstance(data_field, dict) and (
+        data_field.get('recommendations') or data_field.get('metrics') or data_field.get('customer_message')
+    ):
+        return data_field
+
+    # Fall C: Flache Metriken direkt in der Zeile (belegt, frei, etc.)
+    if any(k in row for k in ['belegt', 'frei', 'belegungsgrad']):
+        return {"metrics": {k: v for k, v in row.items() if k not in ('id', 'created_at', 'updated_at', 'tenant_id')}}
+
+    return None
+
+
+def _build_contract(analysis_data, row=None):
+    """Baut ein standardisiertes Contract-Dict aus analysis_data."""
+    metrics = analysis_data.get('metrics', {})
+    # Wenn keine metrics-Key vorhanden, aber flache Metriken existieren → als metrics nutzen
+    if not metrics and any(k in analysis_data for k in ['belegt', 'frei', 'belegungsgrad']):
+        metrics = {k: v for k, v in analysis_data.items()
+                   if k not in ('recommendations', 'customer_message', 'analysis_date', 'status', 'tenant_id')}
+
+    created_at = ''
+    if row and isinstance(row, dict):
+        created_at = row.get('created_at', row.get('updated_at', ''))
+
+    return {
+        "status": "success",
+        "tenant_id": (row or {}).get('tenant_id', analysis_data.get('tenant_id', '')),
+        "count": 1,
+        "data": {
+            "metrics": metrics,
+            "recommendations": analysis_data.get('recommendations', analysis_data.get('recommendation_list', [])),
+            "customer_message": analysis_data.get('customer_message', analysis_data.get('summary', '')),
+            "analysis_date": analysis_data.get('analysis_date', created_at)
+        }
+    }
+
+
 def parse_supabase_response(response_data):
     """Parst n8n-Antwort – sortiert nach created_at, nimmt die NEUESTE Analyse."""
+
+    # n8n-Wrapper entpacken: [{"json": {...}}, ...] → [{...}, ...]
+    response_data = _unwrap_n8n_rows(response_data)
+
     # --- Liste: nach Datum sortieren, neueste zuerst ---
     if isinstance(response_data, list):
         if len(response_data) == 0:
-            return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
+            return {"status": "success", "count": 0, "data": copy.deepcopy(DEFAULT_DATA)}
 
-        # ====== FIX: Sortiere nach created_at absteigend → neueste Zeile zuerst ======
         valid_rows = sorted(
             [r for r in response_data if isinstance(r, dict)],
             key=lambda r: r.get('created_at', r.get('updated_at', '')),
-            reverse=True  # neueste zuerst
+            reverse=True
         )
 
-        # Suche erste (= neueste) Zeile mit analysis_result oder data.recommendations
-        best_row = None
+        # Suche erste (= neueste) Zeile mit verwertbaren Daten
         for row in valid_rows:
-            # Fall A: Item hat analysis_result (direkt aus Supabase)
-            ar = row.get('analysis_result')
-            if ar and ar != 'undefined' and ar is not None:
-                best_row = row
-                break
-            # Fall B: Item hat data.recommendations (bereits transformiert)
-            data_field = row.get('data', {})
-            if isinstance(data_field, dict) and data_field.get('recommendations'):
-                best_row = row
-                break
+            analysis_data = _extract_analysis_from_row(row)
+            if analysis_data:
+                return _build_contract(analysis_data, row)
 
-        if best_row is None:
-            return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
-
-        # Fall A: analysis_result als JSON-String
-        ar = best_row.get('analysis_result')
-        if ar and ar not in ('undefined', None):
-            try:
-                analysis_data = json.loads(ar) if isinstance(ar, str) else ar
-                return {
-                    "status": "success",
-                    "tenant_id": best_row.get('tenant_id'),
-                    "count": 1,
-                    "data": {
-                        "metrics": analysis_data.get('metrics', {}),
-                        "recommendations": analysis_data.get('recommendations', []),
-                        "customer_message": analysis_data.get('customer_message', ''),
-                        "analysis_date": analysis_data.get('analysis_date', best_row.get('created_at', ''))
-                    }
-                }
-            except (json.JSONDecodeError, AttributeError):
-                pass
-
-        # Fall B: data-Feld direkt nutzen
-        data_field = best_row.get('data', {})
-        if isinstance(data_field, dict):
-            return {
-                "status": "success",
-                "tenant_id": best_row.get('tenant_id'),
-                "count": 1,
-                "data": data_field
-            }
-
-        return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
+        return {"status": "success", "count": 0, "data": copy.deepcopy(DEFAULT_DATA)}
 
     # --- Dict direkt von n8n (bereits strukturiert) ---
     if isinstance(response_data, dict):
+        # n8n-Wrapper: {"json": {...}} → entpacken
+        if 'json' in response_data and isinstance(response_data['json'], dict):
+            response_data = response_data['json']
+
         if 'data' in response_data:
             data = response_data.get('data', {})
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                    response_data = dict(response_data)
+                    response_data['data'] = data
+                except (json.JSONDecodeError, TypeError):
+                    pass
             has_content = (
-                data.get('recommendations') or
-                data.get('metrics') or
-                data.get('customer_message')
+                isinstance(data, dict) and (
+                    data.get('recommendations') or
+                    data.get('metrics') or
+                    data.get('customer_message')
+                )
             )
             if has_content and response_data.get('count', 0) == 0:
                 response_data = dict(response_data)
                 response_data['count'] = 1
-            return response_data
-        ar = response_data.get('analysis_result')
-        if ar and ar not in ('undefined', None):
-            try:
-                analysis_data = json.loads(ar) if isinstance(ar, str) else ar
-                return {
-                    "status": "success",
-                    "tenant_id": response_data.get('tenant_id'),
-                    "count": 1,
-                    "data": {
-                        "metrics": analysis_data.get('metrics', {}),
-                        "recommendations": analysis_data.get('recommendations', []),
-                        "customer_message": analysis_data.get('customer_message', ''),
-                        "analysis_date": analysis_data.get('analysis_date', '')
-                    }
-                }
-            except (json.JSONDecodeError, AttributeError):
-                pass
+            if response_data.get('status') == 'success' or has_content:
+                return response_data
 
-    return {"status": "error", "message": f"Unbekanntes Format: {type(response_data)}", "data": DEFAULT_DATA.copy()}
+        # Versuche direkt als Analyse-Zeile zu lesen
+        analysis_data = _extract_analysis_from_row(response_data)
+        if analysis_data:
+            return _build_contract(analysis_data, response_data)
+
+    return {"status": "error", "message": f"Unbekanntes Format: {type(response_data)}", "data": copy.deepcopy(DEFAULT_DATA)}
 
 
 def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
@@ -413,53 +465,100 @@ def load_last_analysis():
     tenant_id = st.session_state.current_tenant["tenant_id"]
     n8n_base_url = st.session_state.n8n_base_url
 
+    # Debug-Log initialisieren (persistiert in session_state, sichtbar nach st.rerun)
+    debug_log = []
+
     if not n8n_base_url:
         st.warning("n8n Basis-URL nicht gesetzt.")
-        st.session_state.current_data = DEFAULT_DATA.copy()
-        return True
+        st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
+        debug_log.append("ABBRUCH: n8n Basis-URL nicht gesetzt")
+        st.session_state._load_debug_log = debug_log
+        return False
 
     with st.spinner("Lade letzte Analyse..."):
         try:
-            response = requests.post(
-                f"{n8n_base_url.rstrip('/')}/get-last-analysis-only",
-                json={"tenant_id": tenant_id, "uuid": str(uuid.uuid4())},
-                timeout=10
-            )
+            url = f"{n8n_base_url.rstrip('/')}/get-last-analysis-only"
+            payload = {"tenant_id": tenant_id, "uuid": str(uuid.uuid4())}
+            debug_log.append(f"POST {url}")
+            debug_log.append(f"Payload: {json.dumps(payload)}")
+
+            response = requests.post(url, json=payload, timeout=15)
+            debug_log.append(f"HTTP Status: {response.status_code}")
+
             if response.status_code != 200:
+                debug_log.append(f"Response Body: {response.text[:300]}")
                 st.info("Keine vorherige Analyse gefunden.")
-                st.session_state.current_data = DEFAULT_DATA.copy()
-                return True
+                st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
+                st.session_state._load_debug_log = debug_log
+                return False
 
             supabase_data = response.json()
+            debug_log.append(f"Response Typ: {type(supabase_data).__name__}")
+            if isinstance(supabase_data, list):
+                debug_log.append(f"Anzahl Einträge: {len(supabase_data)}")
+                if supabase_data:
+                    debug_log.append(f"Erster Eintrag Keys: {list(supabase_data[0].keys()) if isinstance(supabase_data[0], dict) else type(supabase_data[0]).__name__}")
+            elif isinstance(supabase_data, dict):
+                debug_log.append(f"Response Keys: {list(supabase_data.keys())}")
+
+            # Debug: Rohe Response in session_state speichern
+            st.session_state._raw_supabase_response = supabase_data
 
             if st.session_state.debug_mode:
                 with st.expander("Debug: Raw Supabase Response"):
                     st.json(supabase_data)
 
             contract = parse_supabase_response(supabase_data)
-
+            debug_log.append(f"Contract Status: {contract.get('status')}")
+            debug_log.append(f"Contract Count: {contract.get('count', 0)}")
             data_field = contract.get('data', {})
+            debug_log.append(f"Contract Data Keys: {list(data_field.keys()) if isinstance(data_field, dict) else type(data_field).__name__}")
+            if isinstance(data_field, dict):
+                metrics = data_field.get('metrics', {})
+                debug_log.append(f"Metrics Keys: {list(metrics.keys()) if isinstance(metrics, dict) else type(metrics).__name__}")
+                debug_log.append(f"Recommendations: {len(data_field.get('recommendations', []))} Stück")
+                debug_log.append(f"Customer Message: {'vorhanden' if data_field.get('customer_message') else 'leer'}")
+
             has_data = (
                 contract.get('count', 0) > 0 or
                 bool(data_field.get('recommendations')) or
                 bool(data_field.get('metrics')) or
                 bool(data_field.get('customer_message'))
             )
+            debug_log.append(f"has_data: {has_data}")
+
             if contract.get('status') == 'success' and has_data:
                 business_data = extract_business_data(contract)
+                metrics_applied = business_data.pop('_metrics_applied', 0)
+                debug_log.append(f"Metriken übernommen: {metrics_applied}")
+                debug_log.append(f"Business Data belegt={business_data.get('belegt')}, frei={business_data.get('frei')}, belegungsgrad={business_data.get('belegungsgrad')}")
+
                 st.session_state.current_data = business_data
-                st.session_state.before_analysis = business_data.copy()
+                st.session_state.before_analysis = copy.deepcopy(business_data)
+                st.session_state.last_analysis_loaded = True
                 date_str = business_data.get('analysis_date', '')[:10]
+                debug_log.append(f"ERFOLG: Analyse vom {date_str} geladen")
+                st.session_state._load_debug_log = debug_log
                 st.success(f"Letzte Analyse geladen vom {date_str}")
                 return True
             else:
+                debug_log.append("KEIN DATEN: Contract hat keine verwertbaren Daten")
                 st.info("Keine Analyse in der Datenbank.")
-                st.session_state.current_data = DEFAULT_DATA.copy()
-                return True
+                st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
+                st.session_state._load_debug_log = debug_log
+                return False
 
+        except requests.exceptions.Timeout:
+            debug_log.append("TIMEOUT: n8n-Anfrage dauerte zu lange (>15s)")
+            st.error("Zeitüberschreitung beim Laden der Analyse.")
+            st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
+            st.session_state._load_debug_log = debug_log
+            return False
         except Exception as e:
+            debug_log.append(f"EXCEPTION: {type(e).__name__}: {str(e)}")
             st.error(f"Fehler beim Laden: {str(e)}")
-            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
+            st.session_state._load_debug_log = debug_log
             return False
 
 
@@ -508,7 +607,7 @@ def perform_analysis(uploaded_files):
                 if key not in final_metrics or final_metrics[key] == 0:
                     final_metrics[key] = value
 
-        final_data = DEFAULT_DATA.copy()
+        final_data = copy.deepcopy(DEFAULT_DATA)
         for key in final_data:
             if key in final_metrics:
                 final_data[key] = final_metrics[key]
@@ -549,7 +648,7 @@ def perform_analysis(uploaded_files):
         st.warning(f"⚠️ KI-Analyse fehlgeschlagen: {result.get('message', 'Unbekannter Fehler')}")
         if excel_data:
             st.info("Verwende Excel-Daten als Fallback...")
-            final_data = DEFAULT_DATA.copy()
+            final_data = copy.deepcopy(DEFAULT_DATA)
             for key in final_data:
                 if key in excel_data:
                     final_data[key] = excel_data[key]
@@ -621,6 +720,21 @@ def render_login_page():
 def render_overview():
     tenant = st.session_state.current_tenant
     st.title(f"Dashboard - {tenant['name']}")
+
+    # Debug-Hinweis wenn Default-Daten angezeigt werden
+    if st.session_state.debug_mode:
+        data = st.session_state.current_data
+        is_default = all(
+            data.get(k) == DEFAULT_DATA.get(k)
+            for k in ['belegt', 'frei', 'belegungsgrad']
+        )
+        if is_default and not st.session_state.get('last_analysis_loaded'):
+            st.warning("DEBUG: Dashboard zeigt DEFAULT-Daten. Supabase-Analyse wurde nicht geladen. Prüfe System-Tab für Details.")
+        debug_log = st.session_state.get('_load_debug_log', [])
+        if debug_log:
+            with st.expander("Debug: Letzter Ladevorgang", expanded=False):
+                for entry in debug_log:
+                    st.text(entry)
 
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
@@ -946,7 +1060,7 @@ def render_system():
         if st.button("History löschen", type="secondary"):
             st.session_state.analyses_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') != tenant['tenant_id']]
             save_history_to_disk(tenant['tenant_id'], [])
-            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
             st.session_state.show_comparison = False
             st.success("History gelöscht!")
             st.rerun()
@@ -968,10 +1082,41 @@ def render_system():
     else:
         st.info("n8n Basis-URL nicht konfiguriert")
 
+    # Debug-Panel: zeigt Lade-Log und Daten-Zustand (persistiert über st.rerun)
+    if st.session_state.debug_mode:
+        st.header("Debug: Supabase-Ladevorgang")
+
+        debug_log = st.session_state.get('_load_debug_log', [])
+        if debug_log:
+            with st.expander("Lade-Log (letzte load_last_analysis)", expanded=True):
+                for entry in debug_log:
+                    st.text(entry)
+        else:
+            st.info("Noch kein Lade-Log vorhanden. Melde dich an oder klicke 'Letzte Analyse neu laden'.")
+
+        raw_resp = st.session_state.get('_raw_supabase_response')
+        if raw_resp is not None:
+            with st.expander("Rohe Supabase Response (nach st.rerun sichtbar)", expanded=False):
+                st.json(raw_resp)
+
+        with st.expander("Aktueller current_data Zustand", expanded=True):
+            data = st.session_state.current_data
+            is_default = all(
+                data.get(k) == DEFAULT_DATA.get(k)
+                for k in ['belegt', 'frei', 'belegungsgrad']
+            )
+            if is_default:
+                st.warning("current_data enthält DEFAULT-Werte! Die Supabase-Daten wurden NICHT übernommen.")
+            else:
+                st.success("current_data enthält ECHTE Daten (nicht Defaults).")
+            st.json(data)
+
+        st.metric("last_analysis_loaded", str(st.session_state.get('last_analysis_loaded', False)))
+
 
 # ====== HAUPTAPP ======
 def main():
-    if "current_data" not in st.session_state: st.session_state.current_data = DEFAULT_DATA.copy()
+    if "current_data" not in st.session_state: st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
     if "before_analysis" not in st.session_state: st.session_state.before_analysis = None
     if "after_analysis" not in st.session_state: st.session_state.after_analysis = None
     if "analyses_history" not in st.session_state: st.session_state.analyses_history = []
@@ -1059,7 +1204,7 @@ def main():
                     st.rerun()
             with col2:
                 if st.button("Daten zurücksetzen", type="secondary", use_container_width=True):
-                    st.session_state.current_data = DEFAULT_DATA.copy()
+                    st.session_state.current_data = copy.deepcopy(DEFAULT_DATA)
                     st.session_state.before_analysis = None
                     st.session_state.after_analysis = None
                     st.session_state.show_comparison = False
