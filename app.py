@@ -11,6 +11,9 @@ import base64
 
 # ====== INSIGHTS ENGINE ======
 from insights import build_insights
+from ui_theme import inject_css, style_fig
+from charts import bar_grouped, donut_chart, tips_impact_chart, tips_savings_chart
+from components import kpi_deck
 
 # ====== KLASSEN ======
 class N8NResponseValidator:
@@ -62,6 +65,7 @@ if 'PORT' in os.environ:
 
 # ====== KONFIGURATION ======
 st.set_page_config(page_title="Self-Storage Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
+inject_css()
 
 # ====== PASSWORT-HASHES (sha256) ======
 TENANTS = {
@@ -123,6 +127,16 @@ def extract_business_data(contract: dict) -> dict:
         except json.JSONDecodeError:
             metrics = {}
 
+    # Fallback: if metrics is empty, check if business keys exist at data level
+    if not metrics or (isinstance(metrics, dict) and len(metrics) == 0):
+        for key in ["belegt", "frei", "belegungsgrad", "vertragsdauer_durchschnitt",
+                     "reminder_automat", "social_facebook", "social_google"]:
+            if key in data and data[key] is not None:
+                metrics[key] = data[key]
+        for special in ["kundenherkunft", "zahlungsstatus"]:
+            if special in data and isinstance(data[special], dict):
+                metrics[special] = data[special]
+
     def safe_num(v):
         if isinstance(v, (int, float)):
             return v
@@ -154,13 +168,25 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
         if response.status_code != 200:
             return None, f"HTTP {response.status_code}", None
         json_response = response.json()
+        # Handle array response (n8n may send 2 items)
+        if isinstance(json_response, list):
+            # Filter out supabase-internal items, prefer items with data.metrics
+            filtered = [item for item in json_response if isinstance(item, dict) and not item.get('_for_supabase')]
+            if filtered:
+                json_response = filtered[0]
+            elif json_response:
+                json_response = json_response[0]
+            else:
+                return None, "Leere Array-Response", None
         if isinstance(json_response, dict) and 'data' in json_response:
             contract = json_response
             data = contract.get('data', {})
+            metrics = data.get('metrics', {})
+            has_real_metrics = isinstance(metrics, dict) and len(metrics) > 0
             has_data = (
                 contract.get('count', 0) > 0 or
                 bool(data.get('recommendations')) or
-                bool(data.get('metrics')) or
+                has_real_metrics or
                 bool(data.get('customer_message'))
             )
             if contract.get('status') == 'success' and has_data:
@@ -196,19 +222,41 @@ def parse_supabase_response(response_data):
             reverse=True  # neueste zuerst
         )
 
+        # Filter out supabase-internal items
+        valid_rows = [r for r in valid_rows if not r.get('_for_supabase')]
+
         # Suche erste (= neueste) Zeile mit analysis_result oder data.recommendations
         best_row = None
+
+        # Pass 1: Prefer rows with non-empty metrics
         for row in valid_rows:
-            # Fall A: Item hat analysis_result (direkt aus Supabase)
             ar = row.get('analysis_result')
             if ar and ar != 'undefined' and ar is not None:
-                best_row = row
-                break
-            # Fall B: Item hat data.recommendations (bereits transformiert)
+                try:
+                    parsed = json.loads(ar) if isinstance(ar, str) else ar
+                    if isinstance(parsed, dict) and isinstance(parsed.get('metrics'), dict) and len(parsed.get('metrics', {})) > 0:
+                        best_row = row
+                        break
+                except (json.JSONDecodeError, AttributeError):
+                    pass
             data_field = row.get('data', {})
-            if isinstance(data_field, dict) and data_field.get('recommendations'):
-                best_row = row
-                break
+            if isinstance(data_field, dict):
+                m = data_field.get('metrics', {})
+                if isinstance(m, dict) and len(m) > 0:
+                    best_row = row
+                    break
+
+        # Pass 2: Fallback - any row with recommendations or analysis_result
+        if best_row is None:
+            for row in valid_rows:
+                ar = row.get('analysis_result')
+                if ar and ar != 'undefined' and ar is not None:
+                    best_row = row
+                    break
+                data_field = row.get('data', {})
+                if isinstance(data_field, dict) and data_field.get('recommendations'):
+                    best_row = row
+                    break
 
         if best_row is None:
             return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
@@ -374,7 +422,8 @@ def create_comparison_chart(before_data, after_data, metric_key, title):
         go.Bar(name='Vorher', x=['Vorher'], y=[before_val], marker_color='lightblue'),
         go.Bar(name='Nachher', x=['Nachher'], y=[after_val], marker_color='lightgreen')
     ])
-    fig.update_layout(title=f"{title}<br><span style='font-size:12px;color:{delta_color}'>{delta_symbol}{delta:.1f} Veränderung</span>", height=300, showlegend=True, yaxis_title=title)
+    fig = style_fig(fig, f"{title}<br><span style='font-size:12px;color:{delta_color}'>{delta_symbol}{delta:.1f} Veränderung</span>", 300)
+    fig.update_layout(showlegend=True, yaxis_title=title)
     return fig
 
 def create_timeseries_chart(history_data, metric_key, title):
@@ -388,7 +437,8 @@ def create_timeseries_chart(history_data, metric_key, title):
     if len(dates) < 2:
         return None
     fig = go.Figure(data=[go.Scatter(x=dates, y=values, mode='lines+markers', name=title)])
-    fig.update_layout(title=f"Entwicklung: {title}", height=300, xaxis_title="Datum", yaxis_title=title)
+    fig = style_fig(fig, f"Entwicklung: {title}", 300)
+    fig.update_layout(xaxis_title="Datum", yaxis_title=title)
     return fig
 
 def generate_fallback_recommendations(tenant_name, data):
@@ -439,10 +489,12 @@ def load_last_analysis():
             contract = parse_supabase_response(supabase_data)
 
             data_field = contract.get('data', {})
+            metrics = data_field.get('metrics', {})
+            has_real_metrics = isinstance(metrics, dict) and len(metrics) > 0
             has_data = (
                 contract.get('count', 0) > 0 or
                 bool(data_field.get('recommendations')) or
-                bool(data_field.get('metrics')) or
+                has_real_metrics or
                 bool(data_field.get('customer_message'))
             )
             if contract.get('status') == 'success' and has_data:
@@ -680,7 +732,7 @@ def render_overview():
                 fig = make_subplots(rows=1, cols=2, subplot_titles=('Vorher', 'Nachher'), specs=[[{'type': 'domain'}, {'type': 'domain'}]])
                 fig.add_trace(go.Pie(labels=list(before['kundenherkunft'].keys()), values=list(before['kundenherkunft'].values()), name="Vorher"), 1, 1)
                 fig.add_trace(go.Pie(labels=list(after['kundenherkunft'].keys()), values=list(after['kundenherkunft'].values()), name="Nachher"), 1, 2)
-                fig.update_layout(height=300, title_text="Kundenherkunft")
+                fig = style_fig(fig, "Kundenherkunft", 300)
                 st.plotly_chart(fig, use_container_width=True)
         with col2:
             if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
@@ -689,7 +741,8 @@ def render_overview():
                     go.Bar(name='Vorher', x=categories, y=[before['zahlungsstatus'][k] for k in categories]),
                     go.Bar(name='Nachher', x=categories, y=[after['zahlungsstatus'][k] for k in categories])
                 ])
-                fig.update_layout(title='Zahlungsstatus Vergleich', height=300, barmode='group')
+                fig = style_fig(fig, 'Zahlungsstatus Vergleich', 300)
+                fig.update_layout(barmode='group')
                 st.plotly_chart(fig, use_container_width=True)
 
         recommendations = after.get('recommendations', [])
@@ -708,6 +761,13 @@ def render_overview():
                     for action in tip["actions"]:
                         st.markdown(f"- {action}")
 
+        if local_tips:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.plotly_chart(tips_impact_chart(local_tips), use_container_width=True)
+            with col_b:
+                st.plotly_chart(tips_savings_chart(local_tips), use_container_width=True)
+
         if after.get('customer_message'):
             with st.expander("Zusammenfassung"):
                 st.info(after['customer_message'])
@@ -715,11 +775,12 @@ def render_overview():
     else:
         data = st.session_state.current_data
         st.subheader("Aktuelle KPIs")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1: st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
-        with col2: st.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0)} Monate")
-        with col3: st.metric("Belegte Einheiten", data.get('belegt', 0))
-        with col4: st.metric("Social Engagement", data.get('social_facebook', 0) + data.get('social_google', 0))
+        kpi_deck([
+            {"label": "Belegungsgrad", "value": f"{data.get('belegungsgrad', 0)}%"},
+            {"label": "Ø Vertragsdauer", "value": f"{data.get('vertragsdauer_durchschnitt', 0)} Monate"},
+            {"label": "Belegte Einheiten", "value": str(data.get('belegt', 0))},
+            {"label": "Social Engagement", "value": str(data.get('social_facebook', 0) + data.get('social_google', 0))},
+        ])
 
         local_tips = build_insights(data)
         if local_tips and not data.get("recommendations"):
@@ -730,25 +791,31 @@ def render_overview():
                     for action in tip["actions"]:
                         st.markdown(f"- {action}")
 
+        if local_tips:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.plotly_chart(tips_impact_chart(local_tips), use_container_width=True)
+            with col_b:
+                st.plotly_chart(tips_savings_chart(local_tips), use_container_width=True)
+
         st.subheader("Aktuelle Visualisierungen")
         col1, col2 = st.columns(2)
         with col1:
             belegung = data.get('belegungsgrad', 0)
-            fig = go.Figure(data=[go.Pie(labels=["Belegt", "Frei"], values=[belegung, max(100 - belegung, 0)], hole=0.6)])
-            fig.update_layout(title="Belegungsgrad", height=300)
+            fig = donut_chart(belegung, "Belegungsgrad")
             st.plotly_chart(fig, use_container_width=True)
         with col2:
             if 'kundenherkunft' in data:
                 df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
                 fig = px.pie(df, values='Anzahl', names='Kanal')
-                fig.update_layout(title="Kundenherkunft", height=300)
+                fig = style_fig(fig, "Kundenherkunft", 300)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 labels = data.get('neukunden_labels', ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun'])
                 values = data.get('neukunden_monat', [5, 4, 7, 6, 8, 9])
                 min_len = min(len(labels), len(values))
                 fig = go.Figure(data=[go.Bar(x=labels[:min_len], y=values[:min_len])])
-                fig.update_layout(title="Neukunden pro Monat", height=300)
+                fig = style_fig(fig, "Neukunden pro Monat", 300)
                 st.plotly_chart(fig, use_container_width=True)
 
     st.header("Analyse-History")
@@ -832,11 +899,14 @@ def render_capacity():
             st.metric("Belegte Einheiten", after.get('belegt', 0))
             st.metric("Freie Einheiten", after.get('frei', 0))
             st.metric("Belegungsgrad", f"{after.get('belegungsgrad', 0)}%")
-        fig = go.Figure(data=[
-            go.Bar(name='Vorher', x=['Belegt', 'Frei'], y=[before.get('belegt', 0), before.get('frei', 0)]),
-            go.Bar(name='Nachher', x=['Belegt', 'Frei'], y=[after.get('belegt', 0), after.get('frei', 0)])
-        ])
-        fig.update_layout(title='Kapazitätsverteilung Vergleich', barmode='group', height=400)
+        fig = bar_grouped(
+            ['Belegt', 'Frei'],
+            [before.get('belegt', 0), before.get('frei', 0)],
+            [after.get('belegt', 0), after.get('frei', 0)],
+            labels=('Vorher', 'Nachher'),
+            title='Kapazitätsverteilung Vergleich',
+            h=400
+        )
         st.plotly_chart(fig, use_container_width=True)
     else:
         col1, col2 = st.columns(2)
@@ -846,7 +916,7 @@ def render_capacity():
             st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
         with col2:
             fig = go.Figure(data=[go.Bar(x=["Belegt", "Frei"], y=[data.get("belegt", 0), data.get("frei", 0)])])
-            fig.update_layout(title="Kapazitätsverteilung", height=300)
+            fig = style_fig(fig, "Kapazitätsverteilung", 300)
             st.plotly_chart(fig, use_container_width=True)
 
 
