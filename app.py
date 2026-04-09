@@ -28,7 +28,7 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 
 sys.excepthook = global_exception_handler
 
-# ========== MODULE IMPORTIEREN (bereits getestet) ==========
+# ========== MODULE IMPORTIEREN ==========
 try:
     from ui_theme import inject_css, style_fig
     from insights import build_insights
@@ -83,7 +83,7 @@ DEFAULT_DATA = {
     "recommendations": [], "customer_message": ""
 }
 
-# ========== SESSION-STATE INITIALISIEREN ==========
+# ========== SESSION-STATE ==========
 def init_session_state():
     defaults = {
         "current_data": DEFAULT_DATA.copy(),
@@ -101,12 +101,7 @@ def init_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-try:
-    init_session_state()
-except Exception as e:
-    st.error(f"❌ Fehler bei Session-State-Initialisierung: {e}")
-    st.code(traceback.format_exc())
-    st.stop()
+init_session_state()
 
 # ========== N8NResponseValidator ==========
 class N8NResponseValidator:
@@ -151,7 +146,7 @@ class N8NResponseValidator:
             return None, "Leere Liste"
         return None, f"Unbekanntes Response-Format: {type(response)}"
 
-# ========== PERSISTENTE HISTORY ==========
+# ========== HILFSFUNKTIONEN ==========
 def save_history_to_disk(tenant_id: str, history: list):
     try:
         path = pathlib.Path(f".history_{tenant_id}.json")
@@ -168,7 +163,6 @@ def load_history_from_disk(tenant_id: str) -> list:
         print(f"History laden fehlgeschlagen: {e}")
     return []
 
-# ========== HILFSFUNKTIONEN ==========
 def extract_business_data(contract: dict) -> dict:
     data = contract.get("data", {})
     result = DEFAULT_DATA.copy()
@@ -219,10 +213,7 @@ def parse_supabase_response(response_data):
             ar = row.get('analysis_result')
             if ar and ar != 'undefined' and ar is not None:
                 try:
-                    if isinstance(ar, str):
-                        parsed = json.loads(ar)
-                    else:
-                        parsed = ar
+                    parsed = json.loads(ar) if isinstance(ar, str) else ar
                     if isinstance(parsed, dict) and isinstance(parsed.get('metrics'), dict) and len(parsed.get('metrics', {})) > 0:
                         best_row = row
                         break
@@ -239,10 +230,7 @@ def parse_supabase_response(response_data):
         ar = best_row.get('analysis_result')
         if ar and ar not in ('undefined', None):
             try:
-                if isinstance(ar, str):
-                    analysis_data = json.loads(ar)
-                else:
-                    analysis_data = ar
+                analysis_data = json.loads(ar) if isinstance(ar, str) else ar
                 return {
                     "status": "success",
                     "tenant_id": best_row.get('tenant_id'),
@@ -262,10 +250,7 @@ def parse_supabase_response(response_data):
         ar = response_data.get('analysis_result')
         if ar and ar not in ('undefined', None):
             try:
-                if isinstance(ar, str):
-                    analysis_data = json.loads(ar)
-                else:
-                    analysis_data = ar
+                analysis_data = json.loads(ar) if isinstance(ar, str) else ar
                 return {
                     "status": "success",
                     "tenant_id": response_data.get('tenant_id'),
@@ -279,9 +264,41 @@ def parse_supabase_response(response_data):
                 }
             except:
                 pass
-    return {"status": "error", "message": f"Unbekanntes Format", "data": DEFAULT_DATA.copy()}
+    return {"status": "error", "message": "Unbekanntes Format", "data": DEFAULT_DATA.copy()}
 
-# ========== API-FUNKTIONEN ==========
+def post_to_n8n_analyze(base_url, tenant_id, uuid_str, file_info):
+    url = f"{base_url.rstrip('/')}/analyze-with-deepseek"
+    filename, file_content, file_type = file_info
+    base64_content = base64.b64encode(file_content).decode('utf-8')
+    payload = {
+        "tenant_id": tenant_id,
+        "uuid": uuid_str,
+        "action": "analyze_with_deepseek",
+        "file": {"filename": filename, "content_type": file_type, "data": base64_content},
+        "metadata": {"source": "streamlit", "timestamp": datetime.now().isoformat()}
+    }
+    headers = {'Content-Type': 'application/json'}
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        if response.status_code != 200:
+            return {"status": "error", "message": f"HTTP {response.status_code}"}
+        json_response = response.json()
+        if isinstance(json_response, dict) and "status" in json_response:
+            standardized = json_response
+        else:
+            validated_data, error = N8NResponseValidator.validate_response(json_response)
+            if validated_data:
+                standardized = {"status": "success", "data": validated_data}
+            else:
+                standardized = {"status": "error", "data": {}}
+        return {
+            "status": "success",
+            "message": "Analyse erfolgreich",
+            "data": standardized.get("data", {}) if standardized.get("status") == "success" else None
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 def load_last_analysis():
     if not st.session_state.logged_in:
         return False
@@ -332,57 +349,83 @@ def load_last_analysis():
             st.session_state.current_data = DEFAULT_DATA.copy()
             return False
 
-# ========== SEITEN-RENDERING (MIT FEHLERBEHANDLUNG) ==========
+def perform_analysis(uploaded_files):
+    if not st.session_state.logged_in:
+        st.error("Kein Tenant eingeloggt")
+        return
+    tenant_id = st.session_state.current_tenant['tenant_id']
+    tenant_name = st.session_state.current_tenant['name']
+    st.session_state.before_analysis = st.session_state.current_data.copy()
+    n8n_base_url = st.session_state.n8n_base_url
+    if not n8n_base_url:
+        st.error("Bitte n8n Basis-URL in der Sidebar eingeben")
+        return
+    main_file = uploaded_files[0]
+    file_info = (main_file.name, main_file.getvalue(), main_file.type)
+    with st.spinner("KI analysiert Daten... (dies kann 30-60 Sekunden dauern)"):
+        result = post_to_n8n_analyze(n8n_base_url, tenant_id, str(uuid.uuid4()), file_info)
+    if result['status'] == 'success' and result.get('data'):
+        n8n_data = result['data']
+        final_data = DEFAULT_DATA.copy()
+        if "metrics" in n8n_data:
+            for k, v in n8n_data["metrics"].items():
+                if k in final_data:
+                    final_data[k] = v
+        final_data["recommendations"] = n8n_data.get("recommendations", [])
+        final_data["customer_message"] = n8n_data.get("customer_message", f"Analyse für {tenant_name} abgeschlossen.")
+        final_data["analysis_date"] = n8n_data.get("analysis_date", datetime.now().isoformat())
+        st.session_state.after_analysis = final_data
+        st.session_state.current_data = final_data
+        st.session_state.show_comparison = True
+        st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}!")
+        st.balloons()
+        time.sleep(1)
+        st.rerun()
+    else:
+        st.error(f"Analyse fehlgeschlagen: {result.get('message')}")
+
+# ========== SEITEN RENDERING ==========
 def render_login_page():
-    try:
-        st.title("Self-Storage Business Intelligence")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("""## Willkommen!
+    st.title("Self-Storage Business Intelligence")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""## Willkommen!
 **Demo-Zugänge:**
 - E-Mail: `demo@kunde.de` | Passwort: `demo123`
 - E-Mail: `test@firma.de` | Passwort: `demo123`
 """)
-        with col2:
-            st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600", caption="Data-Driven Decisions for Self-Storage")
-    except Exception as e:
-        st.error(f"❌ Fehler in render_login_page: {e}")
-        st.code(traceback.format_exc())
+    with col2:
+        st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600", caption="Data-Driven Decisions for Self-Storage")
 
 def render_overview():
-    try:
-        tenant = st.session_state.current_tenant
-        st.title(f"Dashboard - {tenant['name']}")
-        data = st.session_state.current_data
-        kpi_deck([
-            {"label": "Belegungsgrad", "value": f"{data.get('belegungsgrad', 0)}%"},
-            {"label": "Ø Vertragsdauer", "value": f"{data.get('vertragsdauer_durchschnitt', 0)} Monate"},
-            {"label": "Belegte Einheiten", "value": str(data.get('belegt', 0))},
-            {"label": "Social Engagement", "value": str(data.get('social_facebook', 0) + data.get('social_google', 0))},
-        ])
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = donut_chart(data.get('belegungsgrad', 0), "Belegungsgrad")
+    tenant = st.session_state.current_tenant
+    st.title(f"Dashboard - {tenant['name']}")
+    data = st.session_state.current_data
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
+    col2.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0):.1f} Mo")
+    col3.metric("Belegte Einheiten", data.get('belegt', 0))
+    col4.metric("Social Engagement", data.get('social_facebook', 0) + data.get('social_google', 0))
+
+    uploaded_files = st.file_uploader("Dateien hochladen (Excel/CSV)", type=["xlsx", "xls", "csv"], accept_multiple_files=True)
+    c1, c2 = st.columns(2)
+    if c1.button("KI-Analyse starten", disabled=not uploaded_files):
+        perform_analysis(uploaded_files)
+    if c2.button("Letzte Analyse neu laden"):
+        load_last_analysis()
+        st.rerun()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig = donut_chart(data.get('belegungsgrad', 0), "Belegungsgrad")
+        st.plotly_chart(fig, use_container_width=True)
+    with col2:
+        if data.get('kundenherkunft'):
+            df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
+            fig = px.pie(df, values='Anzahl', names='Kanal')
+            fig = style_fig(fig, "Kundenherkunft")
             st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            if 'kundenherkunft' in data:
-                df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
-                fig = px.pie(df, values='Anzahl', names='Kanal')
-                fig = style_fig(fig, "Kundenherkunft", 300)
-                st.plotly_chart(fig, use_container_width=True)
-        uploaded_files = st.file_uploader("Dateien hochladen (Excel/CSV)", type=["xlsx", "xls", "csv"], accept_multiple_files=True, key="file_uploader")
-        col1, col2 = st.columns(2)
-        with col1:
-            analyze_btn = st.button("KI-Analyse starten", type="primary", use_container_width=True, disabled=not uploaded_files)
-        with col2:
-            if st.button("Letzte Analyse neu laden", use_container_width=True):
-                load_last_analysis()
-                st.session_state.show_comparison = False
-                time.sleep(1)
-                st.rerun()
-    except Exception as e:
-        st.error(f"❌ Fehler in render_overview: {e}")
-        st.code(traceback.format_exc())
 
 def render_page(page_name):
     try:
@@ -404,43 +447,36 @@ def render_page(page_name):
 
 # ========== MAIN ==========
 def main():
-    try:
-        with st.sidebar:
-            st.title("Login & Einstellungen")
-            if not st.session_state.logged_in:
-                email = st.text_input("E-Mail", key="login_email")
-                password = st.text_input("Passwort", type="password", key="login_password")
-                if st.button("Anmelden", type="primary", use_container_width=True):
-                    entered_hash = hashlib.sha256(password.encode()).hexdigest()
-                    if email in TENANTS and TENANTS[email]["password_hash"] == entered_hash:
-                        st.session_state.logged_in = True
-                        st.session_state.current_tenant = {k: v for k, v in TENANTS[email].items() if k != "password_hash"}
-                        st.session_state.analyses_history = load_history_from_disk(TENANTS[email]["tenant_id"])
-                        load_last_analysis()
-                        st.rerun()
-                    else:
-                        st.error("Ungültige E-Mail oder Passwort")
-            else:
-                tenant = st.session_state.current_tenant
-                st.success(f"Eingeloggt als: {tenant['name']}")
-                if st.button("Abmelden", use_container_width=True):
-                    st.session_state.logged_in = False
-                    st.session_state.current_tenant = None
-                    st.rerun()
-                st.divider()
-                st.subheader("Konfiguration")
-                n8n_base_url = st.text_input("n8n Basis-URL", value=st.session_state.n8n_base_url)
-                st.session_state.n8n_base_url = n8n_base_url
-                st.session_state.debug_mode = st.checkbox("Debug-Modus")
-                st.divider()
-                page = st.radio("Menü", ["Übersicht", "Kunden", "Kapazität", "Finanzen", "System"])
+    with st.sidebar:
+        st.title("Login & Einstellungen")
         if not st.session_state.logged_in:
-            render_login_page()
+            email = st.text_input("E-Mail")
+            password = st.text_input("Passwort", type="password")
+            if st.button("Anmelden"):
+                entered_hash = hashlib.sha256(password.encode()).hexdigest()
+                if email in TENANTS and TENANTS[email]["password_hash"] == entered_hash:
+                    st.session_state.logged_in = True
+                    st.session_state.current_tenant = {k: v for k, v in TENANTS[email].items() if k != "password_hash"}
+                    load_last_analysis()
+                    st.rerun()
+                else:
+                    st.error("Ungültige E-Mail oder Passwort")
         else:
-            render_page(page)
-    except Exception as e:
-        st.error(f"🔥 FATALER FEHLER in main(): {e}")
-        st.code(traceback.format_exc())
+            tenant = st.session_state.current_tenant
+            st.success(f"Eingeloggt als: {tenant['name']}")
+            if st.button("Abmelden"):
+                st.session_state.logged_in = False
+                st.rerun()
+            st.divider()
+            st.session_state.n8n_base_url = st.text_input("n8n Basis-URL", value=st.session_state.n8n_base_url)
+            st.session_state.debug_mode = st.checkbox("Debug-Modus")
+            st.divider()
+            page = st.radio("Menü", ["Übersicht", "Kunden", "Kapazität", "Finanzen", "System"])
+
+    if not st.session_state.logged_in:
+        render_login_page()
+    else:
+        render_page(page)
 
 if __name__ == "__main__":
     main()
