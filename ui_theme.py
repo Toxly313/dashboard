@@ -93,7 +93,15 @@ def style_fig(fig, title=None, h=300):
     fig.update_layout(
         template="plotly_white",
         colorway=[PURPLE, TEAL, ACCENT, "#22C55E", "#0EA5E9", "#EF4444"],
-        title=title, height=h, margin=dict(t=48, l=16, r=16, b=16),
+        title=title,
+        height=h,
+        margin=dict(t=48, l=16, r=16, b=16),
         font=dict(family="Inter, system-ui, Segoe UI, Roboto, Ubuntu, Arial", size=13),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    ); return fig
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        # 👇 Diese zwei Zeilen sind entscheidend gegen den weißen Bildschirm
+        paper_bgcolor='white',       # Hintergrund der gesamten Grafik
+        plot_bgcolor='#f9f9fc',      # Hintergrund des Plotbereichs (sehr hellgrau)
+        xaxis=dict(gridcolor='#e6eaf2', linecolor='#d0d5dd'),
+        yaxis=dict(gridcolor='#e6eaf2', linecolor='#d0d5dd')
+    )
+    return fig
