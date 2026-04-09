@@ -209,23 +209,22 @@ def post_to_n8n_get_last(base_url, tenant_id, uuid_str):
 
 
 def parse_supabase_response(response_data):
-    """Parst n8n-Antwort – sortiert nach created_at, nimmt die NEUESTE Analyse."""
+    """Parst n8n-Antwort – sortiert nach created_at, nimmt die NEUESTE Analyse.
+       Akzeptiert analysis_result sowohl als String als auch als Objekt."""
     # --- Liste: nach Datum sortieren, neueste zuerst ---
     if isinstance(response_data, list):
         if len(response_data) == 0:
             return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
 
-        # ====== FIX: Sortiere nach created_at absteigend → neueste Zeile zuerst ======
         valid_rows = sorted(
             [r for r in response_data if isinstance(r, dict)],
             key=lambda r: r.get('created_at', r.get('updated_at', '')),
-            reverse=True  # neueste zuerst
+            reverse=True
         )
 
         # Filter out supabase-internal items
         valid_rows = [r for r in valid_rows if not r.get('_for_supabase')]
 
-        # Suche erste (= neueste) Zeile mit analysis_result oder data.recommendations
         best_row = None
 
         # Pass 1: Prefer rows with non-empty metrics
@@ -233,7 +232,11 @@ def parse_supabase_response(response_data):
             ar = row.get('analysis_result')
             if ar and ar != 'undefined' and ar is not None:
                 try:
-                    parsed = json.loads(ar) if isinstance(ar, str) else ar
+                    # 🔧 FIX: Akzeptiere sowohl String als auch Objekt
+                    if isinstance(ar, str):
+                        parsed = json.loads(ar)
+                    else:
+                        parsed = ar
                     if isinstance(parsed, dict) and isinstance(parsed.get('metrics'), dict) and len(parsed.get('metrics', {})) > 0:
                         best_row = row
                         break
@@ -261,11 +264,15 @@ def parse_supabase_response(response_data):
         if best_row is None:
             return {"status": "success", "count": 0, "data": DEFAULT_DATA.copy()}
 
-        # Fall A: analysis_result als JSON-String
+        # Fall A: analysis_result verarbeiten
         ar = best_row.get('analysis_result')
         if ar and ar not in ('undefined', None):
             try:
-                analysis_data = json.loads(ar) if isinstance(ar, str) else ar
+                # 🔧 FIX: String oder Objekt
+                if isinstance(ar, str):
+                    analysis_data = json.loads(ar)
+                else:
+                    analysis_data = ar
                 return {
                     "status": "success",
                     "tenant_id": best_row.get('tenant_id'),
@@ -308,7 +315,11 @@ def parse_supabase_response(response_data):
         ar = response_data.get('analysis_result')
         if ar and ar not in ('undefined', None):
             try:
-                analysis_data = json.loads(ar) if isinstance(ar, str) else ar
+                # 🔧 FIX: String oder Objekt
+                if isinstance(ar, str):
+                    analysis_data = json.loads(ar)
+                else:
+                    analysis_data = ar
                 return {
                     "status": "success",
                     "tenant_id": response_data.get('tenant_id'),
