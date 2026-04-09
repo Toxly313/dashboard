@@ -83,7 +83,7 @@ DEFAULT_DATA = {
     "recommendations": [], "customer_message": ""
 }
 
-# ========== SESSION-STATE ==========
+# ========== SESSION-STATE INITIALISIEREN ==========
 def init_session_state():
     defaults = {
         "current_data": DEFAULT_DATA.copy(),
@@ -146,7 +146,7 @@ class N8NResponseValidator:
             return None, "Leere Liste"
         return None, f"Unbekanntes Response-Format: {type(response)}"
 
-# ========== HILFSFUNKTIONEN ==========
+# ========== PERSISTENTE HISTORY ==========
 def save_history_to_disk(tenant_id: str, history: list):
     try:
         path = pathlib.Path(f".history_{tenant_id}.json")
@@ -349,6 +349,64 @@ def load_last_analysis():
             st.session_state.current_data = DEFAULT_DATA.copy()
             return False
 
+def extract_metrics_from_excel(df):
+    metrics = {}
+    try:
+        if 'belegt' in df.columns:
+            metrics['belegt'] = int(df['belegt'].sum())
+        if 'frei' in df.columns:
+            metrics['frei'] = int(df['frei'].sum())
+        if 'belegt' in metrics and 'frei' in metrics:
+            total = metrics['belegt'] + metrics['frei']
+            if total > 0:
+                metrics['belegungsgrad'] = round((metrics['belegt'] / total) * 100, 1)
+        for col in ['vertragsdauer_durchschnitt', 'reminder_automat', 'social_facebook', 'social_google']:
+            if col in df.columns:
+                metrics[col] = float(df[col].mean())
+        herkunft_cols = [c for c in df.columns if 'herkunft' in c.lower()]
+        if herkunft_cols:
+            counts = df[herkunft_cols[0]].value_counts().to_dict()
+            metrics['kundenherkunft'] = {'Online': counts.get('Online', 0), 'Empfehlung': counts.get('Empfehlung', 0), 'Vorbeikommen': counts.get('Vorbeikommen', 0)}
+        status_cols = [c for c in df.columns if 'status' in c.lower()]
+        if status_cols:
+            counts = df[status_cols[0]].value_counts().to_dict()
+            metrics['zahlungsstatus'] = {'bezahlt': counts.get('bezahlt', 0), 'offen': counts.get('offen', 0), 'überfällig': counts.get('überfällig', 0)}
+    except Exception as e:
+        st.warning(f"Excel-Warnung: {str(e)[:80]}")
+    return metrics
+
+def merge_data(base_dict, new_dict):
+    result = base_dict.copy() if base_dict else {}
+    if new_dict:
+        for key, value in new_dict.items():
+            if key not in ['kundenherkunft', 'zahlungsstatus', 'recommendations', 'customer_message']:
+                result[key] = value
+        if 'kundenherkunft' in new_dict:
+            if 'kundenherkunft' not in result:
+                result['kundenherkunft'] = {'Online': 0, 'Empfehlung': 0, 'Vorbeikommen': 0}
+            for k, v in new_dict['kundenherkunft'].items():
+                result['kundenherkunft'][k] = result['kundenherkunft'].get(k, 0) + v
+        if 'zahlungsstatus' in new_dict:
+            if 'zahlungsstatus' not in result:
+                result['zahlungsstatus'] = {'bezahlt': 0, 'offen': 0, 'überfällig': 0}
+            for k, v in new_dict['zahlungsstatus'].items():
+                result['zahlungsstatus'][k] = result['zahlungsstatus'].get(k, 0) + v
+    return result
+
+def generate_fallback_recommendations(tenant_name, data):
+    recs = []
+    if data.get('belegungsgrad', 0) > 80:
+        recs.append(f"Hohe Auslastung bei {tenant_name} - Erwäge Erweiterung")
+    elif data.get('belegungsgrad', 0) < 50:
+        recs.append(f"Geringe Auslastung bei {tenant_name} - Marketing intensivieren")
+    if data.get('vertragsdauer_durchschnitt', 0) < 6:
+        recs.append("Vertragsdauer erhöhen durch Rabatte für Langzeitmieten")
+    if data.get('social_facebook', 0) + data.get('social_google', 0) < 100:
+        recs.append("Social Media Präsenz ausbauen")
+    recs.append("Regelmäßige Kundenbefragungen durchführen")
+    recs.append("Automatische Zahlungserinnerungen einrichten")
+    return recs
+
 def perform_analysis(uploaded_files):
     if not st.session_state.logged_in:
         st.error("Kein Tenant eingeloggt")
@@ -356,6 +414,13 @@ def perform_analysis(uploaded_files):
     tenant_id = st.session_state.current_tenant['tenant_id']
     tenant_name = st.session_state.current_tenant['name']
     st.session_state.before_analysis = st.session_state.current_data.copy()
+    excel_data = {}
+    for excel_file in [f for f in uploaded_files if f.name.lower().endswith((".xlsx", ".xls", ".csv"))]:
+        try:
+            df = pd.read_csv(excel_file) if excel_file.name.endswith('.csv') else pd.read_excel(excel_file)
+            excel_data = merge_data(excel_data, extract_metrics_from_excel(df))
+        except Exception as e:
+            st.warning(f"Konnte {excel_file.name} nicht lesen: {str(e)[:50]}")
     n8n_base_url = st.session_state.n8n_base_url
     if not n8n_base_url:
         st.error("Bitte n8n Basis-URL in der Sidebar eingeben")
@@ -364,119 +429,539 @@ def perform_analysis(uploaded_files):
     file_info = (main_file.name, main_file.getvalue(), main_file.type)
     with st.spinner("KI analysiert Daten... (dies kann 30-60 Sekunden dauern)"):
         result = post_to_n8n_analyze(n8n_base_url, tenant_id, str(uuid.uuid4()), file_info)
+    if st.session_state.debug_mode:
+        with st.expander("Debug: n8n Kommunikation", expanded=False):
+            st.write(f"Status: {result['status']}")
+            st.write(f"Message: {result.get('message')}")
+            if result.get('data'):
+                st.json(result['data'])
     if result['status'] == 'success' and result.get('data'):
         n8n_data = result['data']
-        final_data = DEFAULT_DATA.copy()
+        final_metrics = {}
         if "metrics" in n8n_data:
-            for k, v in n8n_data["metrics"].items():
-                if k in final_data:
-                    final_data[k] = v
+            final_metrics = n8n_data["metrics"].copy()
+            for key, value in excel_data.items():
+                if key not in final_metrics or final_metrics[key] == 0:
+                    final_metrics[key] = value
+        final_data = DEFAULT_DATA.copy()
+        for key in final_data:
+            if key in final_metrics:
+                final_data[key] = final_metrics[key]
         final_data["recommendations"] = n8n_data.get("recommendations", [])
+        if not final_data["recommendations"]:
+            final_data["recommendations"] = generate_fallback_recommendations(tenant_name, final_data)
         final_data["customer_message"] = n8n_data.get("customer_message", f"Analyse für {tenant_name} abgeschlossen.")
         final_data["analysis_date"] = n8n_data.get("analysis_date", datetime.now().isoformat())
-        st.session_state.after_analysis = final_data
-        st.session_state.current_data = final_data
-        st.session_state.show_comparison = True
+        final_data["tenant_id"] = tenant_id
+        final_data["files"] = [f.name for f in uploaded_files]
+        final_data["source"] = "n8n_ai"
+        st.session_state.after_analysis = final_data.copy()
+        st.session_state.current_data = final_data.copy()
+        history_entry = {
+            "ts": datetime.now().isoformat(),
+            "data": final_data.copy(),
+            "files": [f.name for f in uploaded_files],
+            "tenant_id": tenant_id,
+            "tenant_name": tenant_name,
+            "type": "ai_analysis",
+            "source": "n8n"
+        }
+        st.session_state.analyses_history.append(history_entry)
+        save_history_to_disk(tenant_id, st.session_state.analyses_history)
+        if 'analyses_used' in st.session_state.current_tenant:
+            st.session_state.current_tenant['analyses_used'] += 1
         st.success(f"✅ KI-Analyse erfolgreich für {tenant_name}!")
+        st.session_state.show_comparison = True
         st.balloons()
-        time.sleep(1)
-        st.rerun()
     else:
-        st.error(f"Analyse fehlgeschlagen: {result.get('message')}")
+        st.warning(f"⚠️ KI-Analyse fehlgeschlagen: {result.get('message', 'Unbekannter Fehler')}")
+        if excel_data:
+            st.info("Verwende Excel-Daten als Fallback...")
+            final_data = DEFAULT_DATA.copy()
+            for key in final_data:
+                if key in excel_data:
+                    final_data[key] = excel_data[key]
+            final_data["recommendations"] = generate_fallback_recommendations(tenant_name, final_data)
+            final_data["customer_message"] = f"Analyse basierend auf Excel-Daten für {tenant_name}"
+            final_data["analysis_date"] = datetime.now().isoformat()
+            final_data["tenant_id"] = tenant_id
+            final_data["files"] = [f.name for f in uploaded_files]
+            final_data["source"] = "excel_fallback"
+            st.session_state.after_analysis = final_data.copy()
+            st.session_state.current_data = final_data.copy()
+            history_entry = {
+                "ts": datetime.now().isoformat(),
+                "data": final_data.copy(),
+                "files": [f.name for f in uploaded_files],
+                "tenant_id": tenant_id,
+                "tenant_name": tenant_name,
+                "type": "excel_analysis",
+                "source": "fallback"
+            }
+            st.session_state.analyses_history.append(history_entry)
+            save_history_to_disk(tenant_id, st.session_state.analyses_history)
+            st.success(f"✅ Excel-Analyse erfolgreich für {tenant_name}!")
+            st.session_state.show_comparison = True
+        else:
+            st.error("Keine analysierbaren Daten gefunden.")
+            return
+    time.sleep(1)
+    st.rerun()
 
-# ========== SEITEN RENDERING ==========
+# ========== SEITENFUNKTIONEN (unverändert aus alter app.py) ==========
 def render_login_page():
     st.title("Self-Storage Business Intelligence")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("""## Willkommen!
+**KI-gestützte Analyse für Self-Storage Unternehmen:**
+✅ Durchgängiger Workflow  
+✅ Vorher/Nachher Visualisierung  
+✅ Automatisches Laden  
+✅ Zeitliche Entwicklung  
+
 **Demo-Zugänge:**
 - E-Mail: `demo@kunde.de` | Passwort: `demo123`
 - E-Mail: `test@firma.de` | Passwort: `demo123`
 """)
     with col2:
         st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=600", caption="Data-Driven Decisions for Self-Storage")
+        st.info("**Beispiel-Vergleich:**\n\n**Vorher:** Belegungsgrad: 75%\n\n**Nachher:** Belegungsgrad: 82% (+7%)")
+    st.divider()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Vergleichsansicht**")
+        st.write("Side-by-Side Diagramme, Delta-Berechnungen")
+    with col2:
+        st.markdown("**History-Tracking**")
+        st.write("Alle Analysen persistent gespeichert, Zeitreihen")
+    with col3:
+        st.markdown("**KI-Integration**")
+        st.write("Automatische Empfehlungen, Datenbank-Anbindung")
 
 def render_overview():
     tenant = st.session_state.current_tenant
     st.title(f"Dashboard - {tenant['name']}")
-    data = st.session_state.current_data
-
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
-    col2.metric("Ø Vertragsdauer", f"{data.get('vertragsdauer_durchschnitt', 0):.1f} Mo")
-    col3.metric("Belegte Einheiten", data.get('belegt', 0))
-    col4.metric("Social Engagement", data.get('social_facebook', 0) + data.get('social_google', 0))
-
-    uploaded_files = st.file_uploader("Dateien hochladen (Excel/CSV)", type=["xlsx", "xls", "csv"], accept_multiple_files=True)
-    c1, c2 = st.columns(2)
-    if c1.button("KI-Analyse starten", disabled=not uploaded_files):
-        perform_analysis(uploaded_files)
-    if c2.button("Letzte Analyse neu laden"):
-        load_last_analysis()
-        st.rerun()
-
+    with col1: st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
+    with col2: st.info(f"Plan: {tenant['plan'].upper()}")
+    with col3:
+        used = tenant.get('analyses_used', 0)
+        limit = tenant.get('analyses_limit', '∞')
+        st.info(f"Analysen: {used}/{limit}")
+    with col4:
+        current_date = st.session_state.current_data.get('analysis_date', '')
+        display_date = current_date[:10] if current_date else "Keine"
+        st.info(f"Letzte Analyse: {display_date}")
+    st.header("Neue Analyse durchführen")
+    uploaded_files = st.file_uploader("Dateien hochladen (Excel/CSV)", type=["xlsx", "xls", "csv"], accept_multiple_files=True, key="file_uploader")
     col1, col2 = st.columns(2)
     with col1:
-        fig = donut_chart(data.get('belegungsgrad', 0), "Belegungsgrad")
-        st.plotly_chart(fig, use_container_width=True)
+        analyze_btn = st.button("KI-Analyse starten", type="primary", use_container_width=True, disabled=not uploaded_files)
     with col2:
-        if data.get('kundenherkunft'):
-            df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
-            fig = px.pie(df, values='Anzahl', names='Kanal')
-            fig = style_fig(fig, "Kundenherkunft")
+        if st.button("Letzte Analyse neu laden", use_container_width=True):
+            load_last_analysis()
+            st.session_state.show_comparison = False
+            time.sleep(1)
+            st.rerun()
+    if analyze_btn and uploaded_files:
+        perform_analysis(uploaded_files)
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis and st.session_state.after_analysis:
+        st.header("Vergleich: Vorher vs. Nachher")
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        st.subheader("Key Performance Indicators")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            delta = float(after.get('belegungsgrad', 0) or 0) - float(before.get('belegungsgrad', 0) or 0)
+            st.metric("Belegungsgrad", f"{float(after.get('belegungsgrad', 0) or 0)}%", f"{delta:+.1f}%")
+        with col2:
+            delta = float(after.get('vertragsdauer_durchschnitt', 0) or 0) - float(before.get('vertragsdauer_durchschnitt', 0) or 0)
+            st.metric("Ø Vertragsdauer", f"{float(after.get('vertragsdauer_durchschnitt', 0) or 0):.1f} Monate", f"{delta:+.1f}")
+        with col3:
+            delta = after.get('belegt', 0) - before.get('belegt', 0)
+            st.metric("Belegte Einheiten", after.get('belegt', 0), f"{int(delta):+d}")
+        with col4:
+            before_social = int(before.get('social_facebook', 0) or 0) + int(before.get('social_google', 0) or 0)
+            after_social = int(after.get('social_facebook', 0) or 0) + int(after.get('social_google', 0) or 0)
+            st.metric("Social Engagement", after_social, f"{after_social - before_social:+.0f}")
+        st.subheader("Detail-Vergleich")
+        col1, col2 = st.columns(2)
+        with col1:
+            fig = go.Figure(data=[
+                go.Bar(name='Vorher', x=['Vorher'], y=[before.get('belegungsgrad', 0)], marker_color='#3B82F6'),
+                go.Bar(name='Nachher', x=['Nachher'], y=[after.get('belegungsgrad', 0)], marker_color='#8B5CF6')
+            ])
+            fig = style_fig(fig, "Belegungsgrad (%)", 300)
+            st.plotly_chart(fig, use_container_width=True)
+            if 'kundenherkunft' in before and 'kundenherkunft' in after:
+                fig = make_subplots(rows=1, cols=2, subplot_titles=('Vorher', 'Nachher'), specs=[[{'type': 'domain'}, {'type': 'domain'}]])
+                fig.add_trace(go.Pie(labels=list(before['kundenherkunft'].keys()), values=list(before['kundenherkunft'].values()), name="Vorher"), 1, 1)
+                fig.add_trace(go.Pie(labels=list(after['kundenherkunft'].keys()), values=list(after['kundenherkunft'].values()), name="Nachher"), 1, 2)
+                fig = style_fig(fig, "Kundenherkunft", 300)
+                st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
+                categories = list(before['zahlungsstatus'].keys())
+                fig = go.Figure(data=[
+                    go.Bar(name='Vorher', x=categories, y=[before['zahlungsstatus'][k] for k in categories], marker_color='#3B82F6'),
+                    go.Bar(name='Nachher', x=categories, y=[after['zahlungsstatus'][k] for k in categories], marker_color='#8B5CF6')
+                ])
+                fig = style_fig(fig, 'Zahlungsstatus Vergleich', 300)
+                fig.update_layout(barmode='group')
+                st.plotly_chart(fig, use_container_width=True)
+        recommendations = after.get('recommendations', [])
+        local_tips = build_insights(after)
+        if recommendations:
+            st.subheader("KI-Empfehlungen")
+            for i, rec in enumerate(recommendations[:5], 1):
+                st.markdown(f"**{i}.** {rec}")
+        if local_tips:
+            st.subheader("📊 Lokale Analyse-Empfehlungen")
+            for tip in local_tips[:4]:
+                with st.expander(f"💡 {tip['title']} | Impact: {tip['impact_score']}/10 | ~{tip['savings_eur']:.0f}€/Monat"):
+                    st.write(tip["analysis"])
+                    for action in tip["actions"]:
+                        st.markdown(f"- {action}")
+        if local_tips:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.plotly_chart(tips_impact_chart(local_tips), use_container_width=True)
+            with col_b:
+                st.plotly_chart(tips_savings_chart(local_tips), use_container_width=True)
+        if after.get('customer_message'):
+            with st.expander("Zusammenfassung"):
+                st.info(after['customer_message'])
+    else:
+        data = st.session_state.current_data
+        st.subheader("Aktuelle KPIs")
+        kpi_deck([
+            {"label": "Belegungsgrad", "value": f"{data.get('belegungsgrad', 0)}%"},
+            {"label": "Ø Vertragsdauer", "value": f"{data.get('vertragsdauer_durchschnitt', 0)} Monate"},
+            {"label": "Belegte Einheiten", "value": str(data.get('belegt', 0))},
+            {"label": "Social Engagement", "value": str(data.get('social_facebook', 0) + data.get('social_google', 0))},
+        ])
+        local_tips = build_insights(data)
+        if local_tips and not data.get("recommendations"):
+            st.subheader("📊 Handlungsempfehlungen")
+            for tip in local_tips[:3]:
+                with st.expander(f"💡 {tip['title']} | Impact: {tip['impact_score']}/10 | ~{tip['savings_eur']:.0f}€/Monat"):
+                    st.write(tip["analysis"])
+                    for action in tip["actions"]:
+                        st.markdown(f"- {action}")
+        if local_tips:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.plotly_chart(tips_impact_chart(local_tips), use_container_width=True)
+            with col_b:
+                st.plotly_chart(tips_savings_chart(local_tips), use_container_width=True)
+        st.subheader("Aktuelle Visualisierungen")
+        col1, col2 = st.columns(2)
+        with col1:
+            belegung = data.get('belegungsgrad', 0)
+            fig = donut_chart(belegung, "Belegungsgrad")
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            if 'kundenherkunft' in data:
+                df = pd.DataFrame({"Kanal": list(data['kundenherkunft'].keys()), "Anzahl": list(data['kundenherkunft'].values())})
+                fig = px.pie(df, values='Anzahl', names='Kanal')
+                fig = style_fig(fig, "Kundenherkunft", 300)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                labels = data.get('neukunden_labels', ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun'])
+                values = data.get('neukunden_monat', [5, 4, 7, 6, 8, 9])
+                min_len = min(len(labels), len(values))
+                fig = go.Figure(data=[go.Bar(x=labels[:min_len], y=values[:min_len])])
+                fig = style_fig(fig, "Neukunden pro Monat", 300)
+                st.plotly_chart(fig, use_container_width=True)
+    st.header("Analyse-History")
+    tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
+    if tenant_history:
+        st.subheader("Entwicklung über Zeit")
+        col1, col2 = st.columns(2)
+        with col1:
+            dates, vals = [], []
+            for h in sorted(tenant_history, key=lambda x: x['ts']):
+                dates.append(h['ts'][:10])
+                vals.append(h['data'].get('belegungsgrad', 0))
+            fig = go.Figure(data=[go.Scatter(x=dates, y=vals, mode='lines+markers')])
+            fig = style_fig(fig, "Belegungsgrad (%)", 300)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            dates, vals = [], []
+            for h in sorted(tenant_history, key=lambda x: x['ts']):
+                dates.append(h['ts'][:10])
+                vals.append(h['data'].get('vertragsdauer_durchschnitt', 0))
+            fig = go.Figure(data=[go.Scatter(x=dates, y=vals, mode='lines+markers')])
+            fig = style_fig(fig, "Vertragsdauer (Monate)", 300)
+            st.plotly_chart(fig, use_container_width=True)
+        history_df = []
+        for entry in reversed(tenant_history[-10:]):
+            history_df.append({
+                'Datum': entry.get('ts', '')[:16].replace('T', ' '),
+                'Dateien': len(entry.get('files', [])),
+                'Belegungsgrad': f"{entry['data'].get('belegungsgrad', 0)}%",
+                'Empfehlungen': len(entry['data'].get('recommendations', []))
+            })
+        if history_df:
+            st.dataframe(pd.DataFrame(history_df), use_container_width=True)
+    else:
+        st.info("Noch keine Analysen durchgeführt. Starten Sie Ihre erste KI-Analyse!")
+
+def render_customers():
+    st.title("Kundenanalyse")
+    data = st.session_state.current_data
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        st.header("Kundenentwicklung")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Vorher")
+            if 'kundenherkunft' in before:
+                st.dataframe(pd.DataFrame({"Kanal": list(before['kundenherkunft'].keys()), "Anzahl": list(before['kundenherkunft'].values())}), use_container_width=True)
+        with col2:
+            st.subheader("Nachher")
+            if 'kundenherkunft' in after:
+                st.dataframe(pd.DataFrame({"Kanal": list(after['kundenherkunft'].keys()), "Anzahl": list(after['kundenherkunft'].values())}), use_container_width=True)
+        if 'kundenherkunft' in before and 'kundenherkunft' in after:
+            st.subheader("Veränderungen")
+            changes = []
+            for key in before['kundenherkunft'].keys():
+                bv = before['kundenherkunft'].get(key, 0)
+                av = after['kundenherkunft'].get(key, 0)
+                change = av - bv
+                pct = (change / bv * 100) if bv > 0 else 0
+                changes.append({'Kanal': key, 'Vorher': bv, 'Nachher': av, 'Δ Absolut': change, 'Δ %': f"{pct:+.1f}%" if bv > 0 else "Neu"})
+            st.dataframe(pd.DataFrame(changes), use_container_width=True)
+    else:
+        herkunft = data.get("kundenherkunft", {})
+        if herkunft:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.dataframe(pd.DataFrame({"Kanal": list(herkunft.keys()), "Anzahl": list(herkunft.values())}), use_container_width=True)
+            with col2:
+                fig = px.pie(pd.DataFrame({"Kanal": list(herkunft.keys()), "Anzahl": list(herkunft.values())}), values='Anzahl', names='Kanal')
+                fig = style_fig(fig, "Kundenherkunft", 300)
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Keine Kundendaten verfügbar. Führen Sie eine Analyse durch.")
+
+def render_capacity():
+    st.title("Kapazitätsmanagement")
+    data = st.session_state.current_data
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Vorher")
+            st.metric("Belegte Einheiten", before.get('belegt', 0))
+            st.metric("Freie Einheiten", before.get('frei', 0))
+            st.metric("Belegungsgrad", f"{before.get('belegungsgrad', 0)}%")
+        with col2:
+            st.subheader("Nachher")
+            st.metric("Belegte Einheiten", after.get('belegt', 0))
+            st.metric("Freie Einheiten", after.get('frei', 0))
+            st.metric("Belegungsgrad", f"{after.get('belegungsgrad', 0)}%")
+        fig = bar_grouped(
+            ['Belegt', 'Frei'],
+            [before.get('belegt', 0), before.get('frei', 0)],
+            [after.get('belegt', 0), after.get('frei', 0)],
+            labels=('Vorher', 'Nachher'),
+            title='Kapazitätsverteilung Vergleich',
+            h=400
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Belegte Einheiten", data.get("belegt", 0))
+            st.metric("Freie Einheiten", data.get("frei", 0))
+            st.metric("Belegungsgrad", f"{data.get('belegungsgrad', 0)}%")
+        with col2:
+            fig = go.Figure(data=[go.Bar(x=["Belegt", "Frei"], y=[data.get("belegt", 0), data.get("frei", 0)])])
+            fig = style_fig(fig, "Kapazitätsverteilung", 300)
             st.plotly_chart(fig, use_container_width=True)
 
-def render_page(page_name):
-    try:
-        if page_name == "Übersicht":
-            render_overview()
-        elif page_name == "Kunden":
-            st.title("Kundenanalyse")
-        elif page_name == "Kapazität":
-            st.title("Kapazitätsmanagement")
-        elif page_name == "Finanzen":
-            st.title("Finanzübersicht")
-        elif page_name == "System":
-            st.title("System & Export")
+def render_finance():
+    st.title("Finanzübersicht")
+    data = st.session_state.current_data
+    if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+        before = st.session_state.before_analysis
+        after = st.session_state.after_analysis
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Vorher")
+            if 'zahlungsstatus' in before:
+                st.dataframe(pd.DataFrame({"Status": list(before['zahlungsstatus'].keys()), "Anzahl": list(before['zahlungsstatus'].values())}), use_container_width=True)
+        with col2:
+            st.subheader("Nachher")
+            if 'zahlungsstatus' in after:
+                st.dataframe(pd.DataFrame({"Status": list(after['zahlungsstatus'].keys()), "Anzahl": list(after['zahlungsstatus'].values())}), use_container_width=True)
+        if 'zahlungsstatus' in before and 'zahlungsstatus' in after:
+            before_total = sum(before['zahlungsstatus'].values())
+            before_moral = (before['zahlungsstatus'].get('bezahlt', 0) / before_total * 100) if before_total > 0 else 0
+            after_total = sum(after['zahlungsstatus'].values())
+            after_moral = (after['zahlungsstatus'].get('bezahlt', 0) / after_total * 100) if after_total > 0 else 0
+            col1, col2 = st.columns(2)
+            with col1: st.metric("Zahlungsmoral Vorher", f"{before_moral:.1f}%")
+            with col2: st.metric("Zahlungsmoral Nachher", f"{after_moral:.1f}%", f"{after_moral - before_moral:+.1f}%")
+    else:
+        status = data.get("zahlungsstatus", {})
+        if status:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.dataframe(pd.DataFrame({"Status": list(status.keys()), "Anzahl": list(status.values())}), use_container_width=True)
+            with col2:
+                total = sum(status.values())
+                moral = (status.get('bezahlt', 0) / total * 100) if total > 0 else 0
+                st.metric("Zahlungsmoral", f"{moral:.1f}%")
+                fig = px.pie(pd.DataFrame({"Status": list(status.keys()), "Anzahl": list(status.values())}), values='Anzahl', names='Status')
+                fig = style_fig(fig, "Zahlungsstatus", 300)
+                st.plotly_chart(fig, use_container_width=True)
         else:
-            st.title(page_name)
-    except Exception as e:
-        st.error(f"❌ Fehler beim Rendern der Seite '{page_name}': {e}")
-        st.code(traceback.format_exc())
+            st.info("Keine Finanzdaten verfügbar.")
+
+def render_system():
+    st.title("System & Export")
+    data = st.session_state.current_data
+    tenant = st.session_state.current_tenant
+    st.header("Tenant-Information")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
+        st.info(f"Firmenname: {tenant['name']}")
+    with col2:
+        st.info(f"Abo-Plan: {tenant['plan'].upper()}")
+        st.info(f"Analysen genutzt: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+    st.header("Daten exportieren")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        csv = pd.DataFrame([data]).to_csv(index=False)
+        st.download_button("Aktuelle Daten (CSV)", csv, f"storage_current_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv", use_container_width=True)
+    with col2:
+        if st.session_state.get('show_comparison') and st.session_state.before_analysis:
+            comparison_data = {'vorher': st.session_state.before_analysis, 'nachher': st.session_state.after_analysis, 'vergleich_datum': datetime.now().isoformat()}
+            st.download_button("Vergleich (JSON)", json.dumps(comparison_data, indent=2, ensure_ascii=False), f"storage_comparison_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json", "application/json", use_container_width=True)
+        else:
+            st.button("Vergleich (JSON)", disabled=True, use_container_width=True, help="Kein Vergleich verfügbar.")
+    with col3:
+        tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
+        if tenant_history:
+            st.download_button("Gesamte History (JSON)", json.dumps(tenant_history, indent=2, ensure_ascii=False), f"storage_history_{tenant['tenant_id']}_{datetime.now().strftime('%Y%m%d')}.json", "application/json", use_container_width=True)
+        else:
+            st.button("History (JSON)", disabled=True, use_container_width=True, help="Keine History verfügbar")
+    st.header("Analyserverlauf")
+    tenant_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') == tenant['tenant_id']]
+    if tenant_history:
+        history_options = [f"{h['ts'][:16]} - {len(h.get('files', []))} Dateien" for h in reversed(tenant_history)]
+        selected = st.selectbox("Analyse auswählen", history_options, key="history_select")
+        if selected:
+            idx = history_options.index(selected)
+            selected_entry = list(reversed(tenant_history))[idx]
+            with st.expander("Analyse-Details", expanded=True):
+                st.write(f"Datum: {selected_entry['ts'][:19]}")
+                st.write(f"Dateien: {', '.join(selected_entry.get('files', []))}")
+                if selected_entry['data'].get('recommendations'):
+                    st.write("Empfehlungen:")
+                    for rec in selected_entry['data']['recommendations'][:3]:
+                        st.write(f"- {rec}")
+                if st.button("Diese Analyse laden", key="load_selected"):
+                    st.session_state.current_data = selected_entry['data'].copy()
+                    st.session_state.before_analysis = selected_entry['data'].copy()
+                    st.session_state.show_comparison = False
+                    st.success("Analyse geladen!")
+                    time.sleep(1)
+                    st.rerun()
+        if st.button("History löschen", type="secondary"):
+            st.session_state.analyses_history = [h for h in st.session_state.analyses_history if h.get('tenant_id') != tenant['tenant_id']]
+            save_history_to_disk(tenant['tenant_id'], [])
+            st.session_state.current_data = DEFAULT_DATA.copy()
+            st.session_state.show_comparison = False
+            st.success("History gelöscht!")
+            st.rerun()
+    else:
+        st.info("Noch keine Analysen für diesen Tenant")
+    st.header("Systeminformation")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: st.metric("Analysen gesamt", len(tenant_history))
+    with col2: st.metric("Vergleich aktiv", "Ja" if st.session_state.get('show_comparison') else "Nein")
+    with col3: st.metric("Debug-Modus", "Aktiv" if st.session_state.debug_mode else "Inaktiv")
+    with col4: st.metric("n8n Basis-URL", "Gesetzt" if st.session_state.n8n_base_url else "Fehlt")
+    st.subheader("n8n Endpunkte")
+    if st.session_state.n8n_base_url:
+        base = st.session_state.n8n_base_url.rstrip('/')
+        st.code(f"GET-LAST: {base}/get-last-analysis-only")
+        st.code(f"NEW-ANALYSIS: {base}/analyze-with-deepseek")
+    else:
+        st.info("n8n Basis-URL nicht konfiguriert")
 
 # ========== MAIN ==========
 def main():
     with st.sidebar:
         st.title("Login & Einstellungen")
         if not st.session_state.logged_in:
-            email = st.text_input("E-Mail")
-            password = st.text_input("Passwort", type="password")
-            if st.button("Anmelden"):
+            email = st.text_input("E-Mail", key="login_email")
+            password = st.text_input("Passwort", type="password", key="login_password")
+            if st.button("Anmelden", type="primary", use_container_width=True):
                 entered_hash = hashlib.sha256(password.encode()).hexdigest()
                 if email in TENANTS and TENANTS[email]["password_hash"] == entered_hash:
                     st.session_state.logged_in = True
                     st.session_state.current_tenant = {k: v for k, v in TENANTS[email].items() if k != "password_hash"}
-                    load_last_analysis()
+                    st.session_state.analyses_history = load_history_from_disk(TENANTS[email]["tenant_id"])
+                    load_success = load_last_analysis()
+                    if load_success:
+                        st.success(f"Willkommen, {TENANTS[email]['name']}!")
+                    else:
+                        st.warning(f"Willkommen, {TENANTS[email]['name']}! Keine vorherige Analyse gefunden.")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Ungültige E-Mail oder Passwort")
         else:
             tenant = st.session_state.current_tenant
             st.success(f"Eingeloggt als: {tenant['name']}")
-            if st.button("Abmelden"):
+            st.info(f"Plan: {tenant['plan'].upper()}")
+            st.info(f"Analysen: {tenant.get('analyses_used', 0)}/{tenant.get('analyses_limit', '∞')}")
+            st.info(f"Tenant-ID: `{tenant['tenant_id']}`")
+            if st.button("Abmelden", use_container_width=True):
                 st.session_state.logged_in = False
+                st.session_state.current_tenant = None
                 st.rerun()
-            st.divider()
-            st.session_state.n8n_base_url = st.text_input("n8n Basis-URL", value=st.session_state.n8n_base_url)
+        st.divider()
+        if st.session_state.logged_in:
+            st.subheader("Konfiguration")
+            n8n_base_url = st.text_input("n8n Basis-URL (ohne Endpunkt)", value=st.session_state.n8n_base_url, key="n8n_base_url_input")
+            st.session_state.n8n_base_url = n8n_base_url
+            if n8n_base_url:
+                st.caption(f"GET-LAST: `{n8n_base_url.rstrip('/')}/get-last-analysis-only`")
+                st.caption(f"ANALYZE: `{n8n_base_url.rstrip('/')}/analyze-with-deepseek`")
             st.session_state.debug_mode = st.checkbox("Debug-Modus")
             st.divider()
-            page = st.radio("Menü", ["Übersicht", "Kunden", "Kapazität", "Finanzen", "System"])
-
+            st.subheader("Navigation")
+            page = st.radio("Menü", ["Übersicht", "Kunden", "Kapazität", "Finanzen", "System"], key="nav_radio")
+            st.divider()
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Vergleich zurücksetzen", use_container_width=True):
+                    st.session_state.show_comparison = False
+                    st.rerun()
+            with col2:
+                if st.button("Daten zurücksetzen", type="secondary", use_container_width=True):
+                    st.session_state.current_data = DEFAULT_DATA.copy()
+                    st.session_state.before_analysis = None
+                    st.session_state.after_analysis = None
+                    st.session_state.show_comparison = False
+                    st.rerun()
     if not st.session_state.logged_in:
         render_login_page()
     else:
-        render_page(page)
+        if page == "Übersicht": render_overview()
+        elif page == "Kunden": render_customers()
+        elif page == "Kapazität": render_capacity()
+        elif page == "Finanzen": render_finance()
+        elif page == "System": render_system()
 
 if __name__ == "__main__":
     main()
