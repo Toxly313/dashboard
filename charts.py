@@ -1,69 +1,63 @@
-import numpy as np
 import plotly.graph_objects as go
-from ui_theme import style_fig, TEAL, PURPLE
+import plotly.express as px
+import pandas as pd
+from ui_theme import style_fig, PRIMARY, SECONDARY, ACCENT, SUCCESS, WARNING, DANGER
 
-def bar_grouped(x, a, b, labels=("A","B"), title=None, h=300):
-    fig = go.Figure()
-    fig.add_bar(name=labels[0], x=x, y=a, marker_color=TEAL)
-    fig.add_bar(name=labels[1], x=x, y=b, marker_color=PURPLE)
+def bar_grouped(categories, before_values, after_values, labels=('Vorher', 'Nachher'), title='', h=400):
+    """Erzeugt gruppiertes Balkendiagramm für Vorher‑Nachher‑Vergleich."""
+    fig = go.Figure(data=[
+        go.Bar(name=labels[0], x=categories, y=before_values, marker_color=PRIMARY),
+        go.Bar(name=labels[1], x=categories, y=after_values, marker_color=SECONDARY)
+    ])
+    fig.update_layout(barmode='group')
     return style_fig(fig, title, h)
 
-def bar_stacked(x, a, b, labels=("A","B"), title=None, h=300):
-    fig = go.Figure()
-    fig.add_bar(name=labels[0], x=x, y=a, marker_color=TEAL)
-    fig.add_bar(name=labels[1], x=x, y=b, marker_color=PURPLE)
-    fig.update_layout(barmode="stack")
+def donut_chart(value, title='', h=300):
+    """Erzeugt ein Donut‑Diagramm (z. B. Belegungsgrad)."""
+    rest = max(0, 100 - value)
+    fig = go.Figure(data=[go.Pie(
+        labels=['Belegt', 'Frei'],
+        values=[value, rest],
+        hole=0.65,
+        marker=dict(colors=[PRIMARY, '#334155']),
+        textinfo='none',
+        hoverinfo='label+percent'
+    )])
+    fig.add_annotation(
+        text=f"{value:.1f}%",
+        x=0.5, y=0.5,
+        font=dict(size=24, color='#F1F5F9'),
+        showarrow=False
+    )
     return style_fig(fig, title, h)
 
-def line_chart(x, y1, y2=None, labels=("A","B"), title=None, h=300):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y1, mode="lines+markers", name=labels[0], line=dict(width=3, color=TEAL))
-    if y2 is not None:
-        fig.add_scatter(x=x, y=y2, mode="lines+markers", name=labels[1], line=dict(width=3, color=PURPLE))
-    return style_fig(fig, title, h)
+def tips_impact_chart(tips, h=300):
+    """Visualisiert den Impact‑Score von Handlungsempfehlungen."""
+    if not tips:
+        return go.Figure()
+    df = pd.DataFrame(tips)
+    colors = [PRIMARY if score >= 8 else SECONDARY if score >= 6 else ACCENT for score in df['impact_score']]
+    fig = go.Figure(data=[go.Bar(
+        x=df['title'],
+        y=df['impact_score'],
+        marker_color=colors,
+        text=df['impact_score'],
+        textposition='outside'
+    )])
+    fig.update_layout(yaxis_title='Impact (0–10)', yaxis_range=[0, 10])
+    return style_fig(fig, 'Priorität nach Impact', h)
 
-def area_chart(x, y1, y2=None, labels=("A","B"), title=None, h=260):
-    fig = go.Figure()
-    fig.add_scatter(x=x, y=y1, mode="lines", fill="tozeroy", name=labels[0], line=dict(width=2, color=TEAL))
-    if y2 is not None:
-        fig.add_scatter(x=x, y=y2, mode="lines", fill="tozeroy", name=labels[1], line=dict(width=2, color=PURPLE, dash="dot"))
-    return style_fig(fig, title, h)
-
-def donut_chart(value, title=None, h=260):
-    v = max(0, min(100, float(value or 0)))
-    fig = go.Figure(go.Pie(values=[v, 100-v], labels=[f"{v:.0f}%", ""], hole=.7,
-                           marker=dict(colors=[PURPLE, "#EEF2FF"]), sort=False, textinfo="label"))
-    fig.update_traces(showlegend=False)
-    return style_fig(fig, title, h)
-
-def sma_forecast(y, window=3, steps=3):
-    if not y: return []
-    y = list(map(float, y))
-    base = np.convolve(y, np.ones(window)/window, mode="valid").tolist()
-    last = base[-1] if base else y[-1]
-    return [last for _ in range(steps)]
-
-def heatmap(matrix, xlabels, ylabels, title="Cohort Retention", h=300):
-    fig = go.Figure(go.Heatmap(z=matrix, x=xlabels, y=ylabels, colorscale="Blues"))
-    return style_fig(fig, title, h)
-
-def tips_impact_chart(items, h=280):
-    """
-    items: [{'title': str, 'impact_score': int(0-10)}]
-    """
-    labels = [it['title'] for it in items]
-    vals   = [float(it.get('impact_score', 0)) for it in items]
-    fig = go.Figure(go.Bar(x=vals, y=labels, orientation='h', marker_color=PURPLE))
-    fig.update_xaxes(title="Impact (0–10)", range=[0,10])
-    return style_fig(fig, "Priorität nach Impact", h)
-
-def tips_savings_chart(items, h=280):
-    """
-    items: [{'title': str, 'savings_eur': number}]
-    """
-    labels = [it['title'] for it in items]
-    vals   = [float(it.get('savings_eur', 0)) for it in items]
-    fig = go.Figure(go.Bar(x=vals, y=labels, orientation='h', marker_color=TEAL))
-    fig.update_xaxes(title="Potenzielle Ersparnis (€ / Monat)")
-    return style_fig(fig, "Monatliche Ersparnis (Schätzung)", h)
-
+def tips_savings_chart(tips, h=300):
+    """Visualisiert die geschätzte monatliche Ersparnis."""
+    if not tips:
+        return go.Figure()
+    df = pd.DataFrame(tips)
+    fig = go.Figure(data=[go.Bar(
+        x=df['title'],
+        y=df['savings_eur'],
+        marker_color=SUCCESS,
+        text=[f"{s:.0f} €" for s in df['savings_eur']],
+        textposition='outside'
+    )])
+    fig.update_layout(yaxis_title='Ersparnis (€ / Monat)')
+    return style_fig(fig, 'Monatliche Ersparnis (Schätzung)', h)
