@@ -8,6 +8,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import requests
 import base64
+import traceback, sys
 
 # ====== INSIGHTS ENGINE ======
 from insights import build_insights
@@ -105,6 +106,12 @@ def save_history_to_disk(tenant_id: str, history: list):
         path.write_text(json.dumps(history, ensure_ascii=False, indent=2))
     except Exception as e:
         print(f"History speichern fehlgeschlagen: {e}")
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    st.error("🔥 Unbehandelte Exception – bitte an Entwickler weitergeben:")
+    st.code(error_msg)
+
+sys.excepthook = global_exception_handler
 
 def load_history_from_disk(tenant_id: str) -> list:
     try:
