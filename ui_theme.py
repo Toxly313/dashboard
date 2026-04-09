@@ -8,6 +8,17 @@ BG="#F7F8FC"; WHITE="#FFFFFF"; BORDER="#E6EAF2"; TEXT="#0F172A"; MUTED="#667085"
 def inject_css():
     st.markdown(f"""
     <style>
+      /* ... dein bestehendes CSS ... */
+      /* Zusätzliche Sicherheitsregel für Plotly-Charts */
+      .js-plotly-plot .plotly .main-svg {{
+        background-color: white !important;
+      }}
+    </style>
+    """, unsafe_allow_html=True)
+
+def inject_css():
+    st.markdown(f"""
+    <style>
       .stApp {{ background:{BG}; }}
       html, body, [class*="css"] {{
         font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial !important;
