@@ -90,7 +90,9 @@ def init_session_state():
         "before_analysis": None,
         "after_analysis": None,
         "analyses_history": [],
-        "n8n_base_url": os.environ.get("N8N_BASE_URL", "https://tundtelectronics.app.n8n.cloud/webhook"),
+        # Kein Vorgabewert. Die Backend-Adresse kommt ausschliesslich aus der
+        # Umgebung. Ohne N8N_BASE_URL laeuft die App mit lokalen Beispieldaten.
+        "n8n_base_url": os.environ.get("N8N_BASE_URL", ""),
         "debug_mode": False,
         "show_comparison": False,
         "last_analysis_loaded": False,
